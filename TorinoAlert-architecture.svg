@@ -1,0 +1,44 @@
+<svg width="680" height="320" viewBox="0 0 680 320" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>Architettura del bot TorinoAlert</title>
+<desc>EventBridge attiva Lambda che raccoglie eventi da fonti pubbliche torinesi, verifica duplicati, legge i secret e invia notifiche a Telegram.</desc>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="#5f5e5a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+<style>
+  text { font-family: Arial, Helvetica, sans-serif; }
+  .th { font-size: 14px; font-weight: bold; }
+  .ts { font-size: 12px; }
+  .box { fill: #F1EFE8; stroke: #5F5E5A; stroke-width: 0.5; }
+  .boxBlue { fill: #E6F1FB; stroke: #185FA5; stroke-width: 0.5; }
+  .boxCoral { fill: #FAECE7; stroke: #993C1D; stroke-width: 0.5; }
+  .titleGray { fill: #2C2C2A; }
+  .subGray { fill: #444441; }
+  .titleBlue { fill: #0C447C; }
+  .subBlue { fill: #185FA5; }
+  .titleCoral { fill: #4A1B0C; }
+  .subCoral { fill: #993C1D; }
+</style>
+
+<rect class="box" x="140" y="30" width="190" height="56" rx="8"/>
+<text class="th titleGray" x="235" y="50" text-anchor="middle" dominant-baseline="central">EventBridge</text>
+<text class="ts subGray" x="235" y="68" text-anchor="middle" dominant-baseline="central">trigger ogni 2 minuti</text>
+
+<rect class="box" x="350" y="30" width="190" height="56" rx="8"/>
+<text class="th titleGray" x="445" y="50" text-anchor="middle" dominant-baseline="central">Fonti pubbliche</text>
+<text class="ts subGray" x="445" y="68" text-anchor="middle" dominant-baseline="central">ARPA, GTT, RFI, Comune</text>
+
+<line x1="235" y1="86" x2="235" y2="124" stroke="#5f5e5a" stroke-width="1" marker-end="url(#arrow)"/>
+<line x1="445" y1="86" x2="445" y2="124" stroke="#5f5e5a" stroke-width="1" marker-end="url(#arrow)"/>
+
+<rect class="boxBlue" x="190" y="126" width="300" height="56" rx="8"/>
+<text class="th titleBlue" x="340" y="146" text-anchor="middle" dominant-baseline="central">Lambda TorinoAlert</text>
+<text class="ts subBlue" x="340" y="164" text-anchor="middle" dominant-baseline="central">dedup DynamoDB, secrets SSM</text>
+
+<line x1="340" y1="182" x2="340" y2="220" stroke="#5f5e5a" stroke-width="1" marker-end="url(#arrow)"/>
+
+<rect class="boxCoral" x="240" y="222" width="200" height="56" rx="8"/>
+<text class="th titleCoral" x="340" y="242" text-anchor="middle" dominant-baseline="central">Telegram bot</text>
+<text class="ts subCoral" x="340" y="260" text-anchor="middle" dominant-baseline="central">notifica canale privato</text>
+</svg>
