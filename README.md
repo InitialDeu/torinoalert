@@ -2,7 +2,7 @@
 
 A serverless bot that monitors public Turin-area sources (weather alerts, public transport, roadworks, air quality) and pushes real-time notifications to a Telegram channel.
 
-![Architecture](../architecture.svg)
+![Architecture](architecture.svg)
 
 ## What it does
 
