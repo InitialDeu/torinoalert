@@ -1,2 +1,9 @@
-telegram_bot_token = "INSERISCI_QUI_IL_TUO_TOKEN"
-telegram_chat_id   = "INSERISCI_QUI_IL_TUO_CHAT_ID"
+# Tutto opzionale: i secret Telegram NON stanno più qui (vedi README, SSM Parameter Store).
+# Copia in variables.tfvars (gitignored) e decommenta ciò che ti serve.
+
+# admin_chat_id        = "123456789"        # chat per avvisi tecnici (fonte giù / ripristinata)
+# alert_email          = "tu@example.com"   # allarmi CloudWatch se la Lambda va in errore o si ferma
+# schedule_rate_minutes = 2
+# max_sends_per_run    = 10
+# dedup_ttl_days       = 7
+# arpa_zones           = ["Piem-L"]

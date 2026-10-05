@@ -1,0 +1,128 @@
+import re
+from datetime import UTC, date, datetime
+
+from torinoalert.sources import arpa, comune, gtt, rfi
+
+NOW = datetime(2026, 10, 5, 12, 0, tzinfo=UTC)
+
+
+def _arpa_with_zone_levels(xml: str, zone: str, levels: dict[str, str]) -> bytes:
+    """Imposta i livelli di alcuni parametri nel blocco <info> di una zona."""
+    blocks = re.split(r"(?=<info>)", xml)
+    for i, block in enumerate(blocks):
+        if f"<areaDesc>{zone}</areaDesc>" in block:
+            for name, level in levels.items():
+                block = re.sub(
+                    rf"(<valueName>{name}</valueName>\s*<value>)[^<]*",
+                    rf"\g<1>{level}",
+                    block,
+                )
+            blocks[i] = block
+    return "".join(blocks).encode()
+
+
+# ---------- ARPA ----------
+
+def test_arpa_green_is_silent_and_stable(fixture_bytes):
+    events = arpa.parse(fixture_bytes("arpa_verde.xml"), zones=("Piem-L",), now=NOW)
+    assert len(events) == 1
+    ev = events[0]
+    assert ev.id == "arpa:Piem-L"
+    assert ev.fingerprint == "VERDE"
+    assert ev.silent_if_new
+    assert ev.severity == "INFO"
+
+
+def test_arpa_alert_lists_days_and_levels(fixture_text):
+    xml = _arpa_with_zone_levels(
+        fixture_text("arpa_verde.xml"), "Piem-L",
+        {"TEMPORALI_1224": "GIALLO", "IDROGEOLOGICO_2436": "ARANCIONE"},
+    )
+    [ev] = arpa.parse(xml, zones=("Piem-L",), now=NOW)
+    assert ev.severity == "HIGH"
+    assert ev.title.startswith("Allerta ARANCIONE — zona L")
+    assert "5 ottobre: Temporali — GIALLA" in ev.body
+    assert "6 ottobre: Idrogeologico — ARANCIONE" in ev.body
+    assert ev.fingerprint == "IDROGEOLOGICO=2;TEMPORALI=1"
+    assert not ev.silent_if_new
+
+
+def test_arpa_fingerprint_ignores_day_rollover(fixture_text):
+    base = fixture_text("arpa_verde.xml")
+    tomorrow = arpa.parse(_arpa_with_zone_levels(base, "Piem-L", {"NEVE_2436": "GIALLO"}), ("Piem-L",), NOW)
+    today = arpa.parse(_arpa_with_zone_levels(base, "Piem-L", {"NEVE_1224": "GIALLO"}), ("Piem-L",), NOW)
+    assert tomorrow[0].fingerprint == today[0].fingerprint
+
+
+def test_arpa_other_zones_and_expired_are_ignored(fixture_bytes):
+    xml = fixture_bytes("arpa_verde.xml")
+    assert arpa.parse(xml, zones=("Piem-Z",), now=NOW) == []
+    assert arpa.parse(xml, zones=("Piem-L",), now=datetime(2026, 10, 8, tzinfo=UTC)) == []
+
+
+# ---------- GTT ----------
+
+def test_gtt_live(fixture_text):
+    events = gtt.parse_live(fixture_text("gtt_live.html"))
+    assert [e.title for e in events] == ["Linee 13 e 15 deviate in entrambe le direzioni.", "Linee 65 e 3382 deviate."]
+    assert all(e.severity == "MED" for e in events)
+    assert events[0].link == "https://www.gtt.to.it/cms/percorari/urbano"
+    # ID stabili tra un'esecuzione e l'altra
+    assert [e.id for e in events] == [e.id for e in gtt.parse_live(fixture_text("gtt_live.html"))]
+
+
+def test_gtt_news_filters_promotions(fixture_bytes):
+    events = gtt.parse_news(fixture_bytes("gtt_news.xml"))
+    titles = " | ".join(e.title for e in events)
+    assert "Trambusto" not in titles
+    assert "podcast" not in titles
+    assert "Piazza Baldissera" in titles
+
+
+def test_gtt_news_severity_from_title(fixture_bytes):
+    by_title = {e.title: e for e in gtt.parse_news(fixture_bytes("gtt_news.xml"))}
+    baldissera = next(e for t, e in by_title.items() if "Baldissera" in t)
+    # il body cita "sospesa la linea B1", ma il titolo dice "ripristinati"
+    assert baldissera.severity == "INFO"
+    se2 = next(e for t, e in by_title.items() if "SE2" in t)
+    assert not se2.title.startswith("🅿️")  # "parcheggio" solo nel body
+
+
+# ---------- RFI ----------
+
+def test_rfi_includes_resolutions_with_fingerprint(fixture_bytes):
+    events = rfi.parse(fixture_bytes("rfi.xml"))
+    assert len(events) == 2
+    assert all(e.severity == "INFO" for e in events)  # "tornata regolare"
+    assert all(e.fingerprint for e in events)
+
+
+def test_rfi_title_update_changes_fingerprint_not_id(fixture_text):
+    xml = fixture_text("rfi.xml")
+    before = rfi.parse(xml.replace("tornata regolare", "sospesa").encode())
+    after = rfi.parse(xml.encode())
+    assert before[0].id == after[0].id
+    assert before[0].fingerprint != after[0].fingerprint
+    assert before[0].severity == "HIGH"
+
+
+# ---------- COMUNE ----------
+
+def test_comune_viabilita(fixture_text):
+    events = comune.parse_viabilita(fixture_text("comune_comunicati.html"))
+    titles = [e.title for e in events]
+    assert any(t.startswith("Cantieri in città") for t in titles)
+    assert all(e.link.startswith("https://www.comune.torino.it/novita/") for e in events)
+    assert "Comunicati" not in titles  # voce di menu
+
+
+def test_comune_smog_skips_past_dates(fixture_text):
+    html = fixture_text("comune_avvisi.html")
+    [ev] = comune.parse_smog(html, today=date(2026, 10, 5))
+    assert "antismog" in ev.title.lower()
+
+    html_past = html.replace(
+        "Misure antismog a tutela della salute, in vigore le limitazioni strutturali",
+        "Limitazioni antismog del 3 ottobre",
+    )
+    assert comune.parse_smog(html_past, today=date(2026, 10, 5)) == []

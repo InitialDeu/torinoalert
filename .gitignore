@@ -4,21 +4,24 @@
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
-.terraform.lock.hcl
+tfplan*
 crash.log
 *.override.tf
 *.override.tf.json
 
-# Lambda build artifacts
-iac/lambda.zip
+# Build Lambda (rigenerata da scripts/build_lambda.py)
+build/
 
-# Dipendenze Python vendored: tieni solo il tuo codice, ignora tutto il resto
-# (le dipendenze si reinstallano con: pip install -r requirements.txt -t iac/lambda)
-iac/lambda/*
-!iac/lambda/handler.py
-!iac/lambda/requirements.txt
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
 
 # Stato runtime locale
+local_state.json
+local_state.tmp
 seen.json
 
 # Ambiente locale
