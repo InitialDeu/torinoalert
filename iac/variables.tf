@@ -8,19 +8,52 @@ variable "project" {
   default = "torino-alert"
 }
 
-# Chat ID e token li inserisci in SSM (SecureString) via terraform
-variable "telegram_bot_token" {
-  type      = string
-  sensitive = true
-}
-
-variable "telegram_chat_id" {
-  type      = string
-  sensitive = true
-}
-
-# polling
 variable "schedule_rate_minutes" {
+  type        = number
+  default     = 2
+  description = "Ogni quanti minuti gira la Lambda."
+  validation {
+    condition     = var.schedule_rate_minutes >= 1 && floor(var.schedule_rate_minutes) == var.schedule_rate_minutes
+    error_message = "schedule_rate_minutes deve essere un intero >= 1."
+  }
+}
+
+variable "dedup_ttl_days" {
+  type        = number
+  default     = 7
+  description = "Giorni dopo cui un evento sparito dalle fonti viene dimenticato (rinnovato finché resta pubblicato)."
+}
+
+variable "max_sends_per_run" {
+  type        = number
+  default     = 10
+  description = "Tetto di messaggi Telegram per esecuzione; il resto parte al giro successivo."
+}
+
+variable "admin_chat_id" {
+  type        = string
+  default     = ""
+  description = "Chat Telegram per gli avvisi tecnici (fonte giù / ripristinata). Vuoto = disattivato."
+}
+
+variable "alert_email" {
+  type        = string
+  default     = ""
+  description = "Email per allarmi CloudWatch (Lambda in errore o ferma). Vuoto = nessun allarme."
+}
+
+variable "arpa_zones" {
+  type        = list(string)
+  default     = ["Piem-L"]
+  description = "Zone di allerta ARPA monitorate (Piem-L = Pianura torinese e colline)."
+}
+
+variable "ddb_read_capacity" {
   type    = number
-  default = 2
+  default = 5
+}
+
+variable "ddb_write_capacity" {
+  type    = number
+  default = 5
 }

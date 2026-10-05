@@ -6,10 +6,14 @@ output "dynamodb_table" {
   value = aws_dynamodb_table.dedup.name
 }
 
+output "log_group" {
+  value = aws_cloudwatch_log_group.lambda_lg.name
+}
+
 output "ssm_token_param" {
-  value = aws_ssm_parameter.telegram_bot_token.name
+  value = local.ssm_token_name
 }
 
 output "ssm_chatid_param" {
-  value = aws_ssm_parameter.telegram_chat_id.name
+  value = local.ssm_chatid_name
 }
