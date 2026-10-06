@@ -5,7 +5,7 @@ from datetime import date
 from bs4 import BeautifulSoup
 
 from ..events import Event
-from ..text import norm_key, sha, today_rome
+from ..text import dates_in_text, norm_key, sha, today_rome
 
 URL = "https://www.cittametropolitana.torino.it/viabilita/percorribilita-strade/modifiche-alla-viabilita-0"
 SOURCE = "STRADE PROVINCIALI"
@@ -18,9 +18,10 @@ TYPES = {
 }
 
 
-def _dates(text: str) -> list[date]:
-    out = []
-    for d, m, y in re.findall(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b", text):
+def _dates(text: str, today: date) -> list[date]:
+    """Date del periodo: "07/10/2026", "01.10.2026" o "16–17–18 Ottobre 2026"."""
+    out = dates_in_text(text, today)
+    for d, m, y in re.findall(r"\b(\d{1,2})[/.](\d{1,2})[/.](\d{4})\b", text):
         try:
             out.append(date(int(y), int(m), int(d)))
         except ValueError:
@@ -48,7 +49,7 @@ def parse(html: str, today: date | None = None) -> list[Event]:
         road_t = re.sub(r"\s+", " ", road.get_text(" ", strip=True))
         town_t = town.get_text(" ", strip=True).title()
         period_t = period.get_text(" ", strip=True)
-        ends = _dates(period_t)
+        ends = _dates(period_t, today)
         if ends and max(ends) < today:
             continue  # già terminata
 

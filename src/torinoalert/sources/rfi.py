@@ -5,7 +5,7 @@ import time
 import feedparser
 
 from ..events import Event
-from ..text import norm_key, sha, strip_html
+from ..text import mentions, norm_key, sha, strip_html
 
 URL = "https://www.rfi.it/content/rfi/it/news-e-media/infomobilita.rss.updates.piemonte.xml"
 SOURCE = "FERROVIE (RFI)"
@@ -44,7 +44,7 @@ def parse(xml_bytes: bytes, now: float | None = None) -> list[Event]:
         summary = strip_html(entry.get("summary") or "")
         text = f"{title} {summary}".lower()
 
-        if not any(k in text for k in TORINO_KEYWORDS):
+        if not mentions(text, TORINO_KEYWORDS):
             continue
         if not any(k in text for k in EVENT_KEYWORDS):
             continue

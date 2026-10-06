@@ -27,6 +27,12 @@ def norm_key(text: str) -> str:
     return re.sub(r"[^0-9a-zà-ù]+", " ", (text or "").lower()).strip()
 
 
+def mentions(text: str, words) -> bool:
+    """Parola o locuzione intera nel testo: "asti" non deve scattare su "rimasti"."""
+    pattern = r"\b(?:" + "|".join(re.escape(w) for w in words) + r")\b"
+    return re.search(pattern, text or "", re.IGNORECASE) is not None
+
+
 # ===============================
 # GEO
 # ===============================

@@ -7,7 +7,7 @@ from datetime import date
 from bs4 import BeautifulSoup
 
 from ..events import Event
-from ..text import dates_in_text, norm_key, sha, today_rome
+from ..text import dates_in_text, mentions, norm_key, sha, today_rome
 from .rfi import TORINO_KEYWORDS
 
 URL = "https://www.trenitalia.com/it/informazioni/Infomobilita/notizie-infomobilita.html"
@@ -29,7 +29,7 @@ def _realtime(item) -> Event | None:
     body_el = item.select_one(".accordion-body")
     body = body_el.get_text("\n", strip=True) if body_el else ""
     text = f"{title} {body}".lower()
-    if not any(k in text for k in TORINO_KEYWORDS):
+    if not mentions(text, TORINO_KEYWORDS):
         return None
     return Event(
         id="trenitalia-rt:" + sha(norm_key(title)),
@@ -51,7 +51,7 @@ def _infolavori(item, today: date) -> list[Event]:
     def flush():
         if heading and desc:
             text = " ".join(desc)
-            if not any(k in f"{heading} {text}".lower() for k in TORINO_KEYWORDS):
+            if not mentions(f"{heading} {text}", TORINO_KEYWORDS):
                 return  # la sezione Piemonte include anche linee lombarde
             on_today = today in dates_in_text(text, today)
             events.append(Event(
