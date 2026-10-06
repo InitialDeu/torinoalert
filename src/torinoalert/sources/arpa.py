@@ -92,6 +92,7 @@ def _zone_event(zone, alerts, effects, bulletin) -> Event:
             link=LINK,
             fingerprint=fingerprint,
             silent_if_new=True,
+            digest_line=f"Nessuna allerta meteo — {_zone_label(zone)}",
         )
 
     top = max(level for _, _, level in alerts)

@@ -6,34 +6,53 @@ A serverless bot that monitors public Turin-area sources (weather alerts, public
 
 ## What it does
 
-Every 2 minutes TorinoAlert polls these public sources **in parallel**:
+TorinoAlert polls 14 public sources **in parallel**. Fast-changing ones are checked every run (2 minutes); heavy or slow-changing ones every 10–60 minutes.
 
-| Source | What | Notes |
+| Source | What | Every |
 |---|---|---|
-| **ARPA Piemonte** | Weather alerts (CAP XML) | Only the configured zones (default `Piem-L`, Turin). Notifies when the alert level changes, including the return to green. |
-| **GTT – live** | "Avvisi ultima ora" (metro, bus, tram) | |
-| **GTT – news** | Service notices RSS | Promotional content filtered out. |
-| **RFI** | Regional rail disruptions | RFI edits the same item over time ("sospesa" → "tornata regolare"): updates are sent as `🔄 AGGIORNAMENTO`. |
-| **Comune di Torino** | Roadworks/traffic and smog limitations | Smog notices whose last date has passed are skipped. |
+| **ARPA Piemonte – allerta** | Weather alerts (CAP XML) for the configured zones (default `Piem-L`, Turin), including the return to green | 10 min |
+| **ARPA – semaforo antismog** | Turin's anti-smog level today/tomorrow (JSON) | 30 min |
+| **ARPA – bollettino calore** | Heat-wave level for Turin, only while the bulletin is in season | 60 min |
+| **GTT – live** | "Avvisi ultima ora" (metro, bus, tram) | 2 min |
+| **GTT – news** | Service notices RSS, promotional content filtered out | 10 min |
+| **RFI** | Regional rail disruptions; edits to the same item are sent as `🔄 AGGIORNAMENTO` | 2 min |
+| **Trenitalia** | Real-time notices touching Turin + "Infolavori Piemonte" (HTML) | 10 min |
+| **Scioperi (MIT)** | Strikes in public transport, rail, air, general — Piedmont or national; reminder the day before | 30 min |
+| **5T – Muoversi in Piemonte** | Road closures and roadworks within `traffic_radius_km` of Turin, regional public transport news | 10 min |
+| **Città metropolitana** | Closures and restrictions on provincial roads (HTML table) | 30 min |
+| **Comune di Torino** | Roadworks/traffic and smog news, with the article text added to the message | 10–30 min |
+| **INGV** | Earthquakes: M2.5+ within 50 km, M3.5+ within 150 km, M4.5+ within 300 km; magnitude revisions are sent as updates | 2 min |
+| **SMAT** | Water service notices (interruptions, non-potable water) | 30 min |
 
-Each event is classified by severity (`CRIT` / `HIGH` / `MED` / `LOW` / `INFO`), deduplicated and sent to Telegram, most severe first.
+Each event is classified by severity (`CRIT` / `HIGH` / `MED` / `LOW` / `INFO`), deduplicated and sent to the channel, most severe first.
+
+### Telegram features
+
+- **Silent notifications**: `LOW` and `INFO` messages never ring; between 23:00 and 07:00 only `CRIT` does.
+- **Threaded updates**: when a notice changes (rail line back to normal, alert level down, magnitude revised), the update is sent as a reply to the original message.
+- **Morning summary** at 07:00 on the channel: weather, alerts, strikes, GTT, trains, road closures active today, anti-smog level.
+- **Private commands** (write to the bot):
+  - `/linea 4`, `/linea metro`, `/linea SE2` — receive GTT notices for your lines in private
+  - `/stop 4` (or `/stop` for all), `/linee`
+  - `/oggi` — the summary of what is going on right now
 
 ### How a run works
 
-1. **Collect** – all sources are fetched concurrently with short timeouts; a slow or broken source never blocks the others.
+1. **Collect** – the sources due in this run are fetched concurrently with short timeouts; a slow or broken source never blocks the others.
 2. **Deduplicate** – one DynamoDB `BatchGetItem` per run. An event stays "seen" for as long as it is published, plus `dedup_ttl_days` (default 7): the TTL is refreshed while the event is still visible, so long-running notices are never re-sent.
 3. **Bootstrap** – the first time a source is collected (fresh deploy, new source), its current events are recorded **silently**, so the channel is not flooded with old news.
-4. **Send** – at most `max_sends_per_run` messages per run (default 10), ordered by severity. Telegram `429` responses are honoured (`retry_after`); anything not sent is retried on the next run.
-5. **Health** – consecutive failures are tracked per source. After 15 failed runs (~30 min) a message goes to the optional admin chat, and another one when the source recovers.
+4. **Send** – at most `max_sends_per_run` channel messages per run (default 10), ordered by severity. Telegram `429` responses are honoured (`retry_after`); anything not sent is retried on the next run. GTT notices are then forwarded privately to whoever follows the lines they mention.
+5. **Health** – failures are tracked per source. After 30 minutes of errors a message goes to the optional admin chat, and another one when the source recovers.
 
 ## Cost: €0
 
 | Service | Usage | Free tier |
 |---|---|---|
-| Lambda (arm64, 256 MB) | ~21,600 runs/month, a few seconds each | 1M requests + 400,000 GB-s/month, always free |
+| Lambda (arm64, 256 MB) | ~21,600 runs/month of a few seconds + bot commands | 1M requests + 400,000 GB-s/month, always free |
+| Lambda Function URL | Telegram webhook for commands | Free (only the invocations count) |
 | DynamoDB (provisioned 5 RCU/5 WCU) | one batch read per run, writes only for new events | 25 RCU/25 WCU + 25 GB, always free (on-demand mode is **not** covered) |
 | SSM Parameter Store (standard) | read once per Lambda container | Free |
-| EventBridge scheduled rule | 1 rule | Free |
+| EventBridge scheduled rules | 2 rules (runs + morning summary) | Free |
 | CloudWatch Logs | one summary line per run, 7-day retention | 5 GB ingestion/month |
 | CloudWatch alarms + SNS email (optional) | 2 alarms | 10 alarms, 1,000 emails/month |
 | S3 (Terraform state) | a few KB | Fractions of a cent, below AWS's billing threshold |
@@ -92,7 +111,10 @@ ruff check .
 pytest
 
 # See what would be sent right now, without sending or saving anything:
-python run_local.py --once --dry-run --no-bootstrap
+python run_local.py --once --dry-run --no-bootstrap --max 500
+
+# See the morning summary:
+python run_local.py --digest --dry-run
 ```
 
 `run_local.py` runs the same code as the Lambda, keeping its state in `local_state.json` instead of DynamoDB. To actually send messages, set `TORINOALERT_BOT_TOKEN` and `TORINOALERT_CHAT_ID` and drop `--dry-run`.
@@ -111,16 +133,21 @@ Terraform variables (`iac/variables.tf`), passed to the Lambda as environment va
 | `admin_chat_id` | `""` | Telegram chat for technical alerts (source down/recovered) |
 | `alert_email` | `""` | Email for CloudWatch alarms (Lambda failing or not running) |
 | `arpa_zones` | `["Piem-L"]` | ARPA alert zones to monitor |
+| `traffic_radius_km` | `15` | Radius around Turin for 5T road events |
+| `digest_hour` | `7` | Hour (Rome time) of the morning summary |
 
 ## Project structure
 
 ```
 .
 ├── src/
-│   ├── handler.py                 # Lambda entry point
+│   ├── handler.py                 # Lambda entry points (schedule + Telegram webhook)
 │   └── torinoalert/
-│       ├── runner.py              # collect → dedup → bootstrap → send → health
-│       ├── sources/               # one parser per source (arpa, gtt, rfi, comune)
+│       ├── runner.py              # collect → dedup → bootstrap → send → DMs → health
+│       ├── sources/               # one parser per source + polling frequency
+│       ├── digest.py              # morning summary and /oggi
+│       ├── bot.py                 # private chat commands
+│       ├── subscriptions.py       # line subscriptions
 │       ├── store.py               # DynamoDB / file / in-memory state
 │       ├── telegram.py            # Telegram client (429-aware)
 │       ├── events.py              # Event model + message formatting
@@ -143,5 +170,6 @@ Terraform variables (`iac/variables.tf`), passed to the Lambda as environment va
 ## Security notes
 
 - Telegram secrets live only in SSM Parameter Store (`SecureString`). The Lambda reads them at runtime, and they never appear in the code, Terraform variables or Terraform state.
-- The Lambda role can only write to its own log group, read its two SSM parameters, and read/write its DynamoDB table.
+- The Lambda role can only write to its own log groups, read its two SSM parameters, and read/write its DynamoDB table.
+- The webhook Function URL is public, as Telegram requires, but it rejects every request without the secret header that Telegram sends. The secret is derived from the bot token, so it is never stored anywhere.
 - The GitHub deploy role can be assumed only from the `main` branch of this repository, and only on resources prefixed with the project name.

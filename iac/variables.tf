@@ -57,3 +57,19 @@ variable "ddb_write_capacity" {
   type    = number
   default = 5
 }
+
+variable "traffic_radius_km" {
+  type        = number
+  default     = 15
+  description = "Raggio attorno a Torino per gli eventi di traffico 5T (chiusure, lavori)."
+}
+
+variable "digest_hour" {
+  type        = number
+  default     = 7
+  description = "Ora (di Roma) del riepilogo mattutino sul canale."
+  validation {
+    condition     = var.digest_hour >= 2 && var.digest_hour <= 23 && floor(var.digest_hour) == var.digest_hour
+    error_message = "digest_hour deve essere un intero tra 2 e 23."
+  }
+}

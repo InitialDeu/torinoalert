@@ -2,6 +2,14 @@ import json
 import urllib.error
 import urllib.request
 
+COMMANDS = [
+    ("oggi", "Riepilogo dei disservizi attivi adesso"),
+    ("linea", "Segui una linea GTT, es. /linea 4 o /linea metro"),
+    ("stop", "Smetti di seguire una linea, es. /stop 4 (senza numero: tutte)"),
+    ("linee", "Le linee che segui"),
+    ("help", "Come funziona il bot"),
+]
+
 
 class TelegramError(Exception):
     def __init__(self, status: int | None, description: str, retry_after: float | None = None):
@@ -20,21 +28,16 @@ class Telegram:
         self.admin_chat_id = admin_chat_id
         self.timeout = timeout
 
-    def send(self, text: str, chat_id: str | None = None) -> None:
-        payload = json.dumps({
-            "chat_id": chat_id or self.chat_id,
-            "text": text,
-            "link_preview_options": {"is_disabled": True},
-        }).encode("utf-8")
+    def call(self, method: str, payload: dict) -> dict:
         req = urllib.request.Request(
-            f"https://api.telegram.org/bot{self.token}/sendMessage",
-            data=payload,
+            f"https://api.telegram.org/bot{self.token}/{method}",
+            data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",
         )
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                resp.read()
+                return json.loads(resp.read().decode("utf-8")).get("result") or {}
         except urllib.error.HTTPError as e:
             try:
                 body = json.loads(e.read().decode("utf-8", errors="ignore"))
@@ -46,19 +49,46 @@ class Telegram:
                 (body.get("parameters") or {}).get("retry_after"),
             ) from None
 
+    def send(self, text: str, chat_id: str | None = None, silent: bool = False, reply_to: int | None = None) -> int:
+        """Invia e restituisce il message_id (serve per rispondere agli aggiornamenti)."""
+        payload = {
+            "chat_id": chat_id or self.chat_id,
+            "text": text,
+            "link_preview_options": {"is_disabled": True},
+            "disable_notification": silent,
+        }
+        if reply_to:
+            payload["reply_parameters"] = {"message_id": int(reply_to), "allow_sending_without_reply": True}
+        return int(self.call("sendMessage", payload).get("message_id") or 0)
+
     def send_admin(self, text: str) -> bool:
         if not self.admin_chat_id:
             return False
         self.send(text, chat_id=self.admin_chat_id)
         return True
 
+    def set_webhook(self, url: str, secret: str) -> None:
+        self.call("setWebhook", {
+            "url": url,
+            "secret_token": secret,
+            "allowed_updates": ["message"],
+            "drop_pending_updates": True,
+        })
+        self.call("setMyCommands", {"commands": [{"command": c, "description": d} for c, d in COMMANDS]})
+
 
 class DryRunNotifier:
     """Stampa i messaggi invece di inviarli (runner locale --dry-run)."""
 
-    def send(self, text: str, chat_id: str | None = None) -> None:
-        print("-" * 60)
+    def __init__(self):
+        self._next_id = 0
+
+    def send(self, text: str, chat_id: str | None = None, silent: bool = False, reply_to: int | None = None) -> int:
+        self._next_id += 1
+        flags = " ".join(f for f, on in (("[silenzioso]", silent), (f"[risposta a {reply_to}]", reply_to)) if on)
+        print("-" * 60 + (f" → {chat_id}" if chat_id else "") + (f" {flags}" if flags else ""))
         print(text)
+        return self._next_id
 
     def send_admin(self, text: str) -> bool:
         print(f"[ADMIN] {text}")

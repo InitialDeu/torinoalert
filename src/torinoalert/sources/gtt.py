@@ -49,7 +49,7 @@ def _relevant(text: str) -> bool:
     )
 
 
-def _make_event(event_id: str, title: str, body: str, link: str) -> Event:
+def _make_event(event_id: str, title: str, body: str, link: str, digest: bool = False) -> Event:
     severity = _severity(title, body)
     is_parking = "parcheggio" in title.lower()
     title = title_with_line(title)
@@ -62,6 +62,7 @@ def _make_event(event_id: str, title: str, body: str, link: str) -> Event:
         title=title,
         body=body,
         link=link or LINK,
+        digest_line=title if digest else "",
     )
 
 
@@ -85,7 +86,7 @@ def parse_live(html: str) -> list[Event]:
         # giorno ("Luci d'artista") è una nuova notifica, una modifica al testo no.
         events.append(_make_event(
             "gtt-live:" + sha(stamp + "|" + norm_key(title)),
-            title, body, link_el["href"] if link_el else "",
+            title, body, link_el["href"] if link_el else "", digest=True,
         ))
     return events
 

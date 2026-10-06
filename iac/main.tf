@@ -33,9 +33,10 @@ provider "aws" {
 data "aws_caller_identity" "current" {}
 
 locals {
-  name          = var.project
-  function_name = "${var.project}-fn"
-  account_id    = data.aws_caller_identity.current.account_id
+  name                  = var.project
+  function_name         = "${var.project}-fn"
+  webhook_function_name = "${var.project}-webhook"
+  account_id            = data.aws_caller_identity.current.account_id
 
   ssm_token_name  = "/${var.project}/telegram/bot_token"
   ssm_chatid_name = "/${var.project}/telegram/chat_id"
@@ -45,6 +46,23 @@ locals {
   ]
 
   alerts_enabled = var.alert_email != ""
+
+  # Configurazione comune alle due Lambda. Le variabili vuote vengono omesse:
+  # Lambda non le conserva e il plan mostrerebbe sempre una differenza.
+  common_env = merge(
+    {
+      SSM_TOKEN_PARAM       = local.ssm_token_name
+      SSM_CHATID_PARAM      = local.ssm_chatid_name
+      DDB_TABLE             = aws_dynamodb_table.dedup.name
+      DEDUP_TTL_DAYS        = tostring(var.dedup_ttl_days)
+      MAX_SENDS_PER_RUN     = tostring(var.max_sends_per_run)
+      ARPA_ZONES            = join(",", var.arpa_zones)
+      TRAFFIC_RADIUS_KM     = tostring(var.traffic_radius_km)
+      DIGEST_HOUR           = tostring(var.digest_hour)
+      SCHEDULE_RATE_MINUTES = tostring(var.schedule_rate_minutes)
+    },
+    var.admin_chat_id != "" ? { ADMIN_CHAT_ID = var.admin_chat_id } : {},
+  )
 }
 
 # -------------------------
@@ -121,9 +139,12 @@ resource "aws_iam_role_policy" "lambda_policy" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect   = "Allow"
-        Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
-        Resource = "${aws_cloudwatch_log_group.lambda_lg.arn}:*"
+        Effect = "Allow"
+        Action = ["logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource = [
+          "${aws_cloudwatch_log_group.lambda_lg.arn}:*",
+          "${aws_cloudwatch_log_group.webhook_lg.arn}:*",
+        ]
       },
       {
         Effect   = "Allow"
@@ -171,19 +192,63 @@ resource "aws_lambda_function" "torino_alert" {
   }
 
   environment {
-    # Le variabili vuote vengono omesse: Lambda non le conserva e il plan mostrerebbe sempre una differenza.
-    variables = merge(
-      {
-        SSM_TOKEN_PARAM   = local.ssm_token_name
-        SSM_CHATID_PARAM  = local.ssm_chatid_name
-        DDB_TABLE         = aws_dynamodb_table.dedup.name
-        DEDUP_TTL_DAYS    = tostring(var.dedup_ttl_days)
-        MAX_SENDS_PER_RUN = tostring(var.max_sends_per_run)
-        ARPA_ZONES        = join(",", var.arpa_zones)
-      },
-      var.admin_chat_id != "" ? { ADMIN_CHAT_ID = var.admin_chat_id } : {},
-    )
+    # WEBHOOK_URL: la Lambda schedulata registra il webhook dei comandi su Telegram.
+    variables = merge(local.common_env, { WEBHOOK_URL = aws_lambda_function_url.webhook.function_url })
   }
+}
+
+# -------------------------
+# Webhook dei comandi Telegram (/linea, /oggi, ...): stesso pacchetto, altro handler.
+# Function URL pubblica: le richieste senza il secret di Telegram ricevono 401.
+# -------------------------
+resource "aws_cloudwatch_log_group" "webhook_lg" {
+  name              = "/aws/lambda/${local.webhook_function_name}"
+  retention_in_days = 7
+}
+
+resource "aws_lambda_function" "webhook" {
+  function_name = local.webhook_function_name
+  role          = aws_iam_role.lambda_role.arn
+
+  runtime       = "python3.13"
+  architectures = ["arm64"]
+  handler       = "handler.webhook_handler"
+
+  filename         = data.archive_file.lambda_zip.output_path
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+
+  timeout     = 30 # /oggi raccoglie tutte le fonti
+  memory_size = 256
+
+  logging_config {
+    log_format = "Text"
+    log_group  = aws_cloudwatch_log_group.webhook_lg.name
+  }
+
+  environment {
+    variables = local.common_env
+  }
+}
+
+resource "aws_lambda_function_url" "webhook" {
+  function_name      = aws_lambda_function.webhook.function_name
+  authorization_type = "NONE"
+}
+
+resource "aws_lambda_permission" "webhook_url" {
+  statement_id           = "AllowPublicFunctionUrl"
+  action                 = "lambda:InvokeFunctionUrl"
+  function_name          = aws_lambda_function.webhook.function_name
+  principal              = "*"
+  function_url_auth_type = "NONE"
+}
+
+resource "aws_lambda_permission" "webhook_invoke" {
+  statement_id             = "AllowInvokeViaFunctionUrl"
+  action                   = "lambda:InvokeFunction"
+  function_name            = aws_lambda_function.webhook.function_name
+  principal                = "*"
+  invoked_via_function_url = true
 }
 
 # -------------------------
@@ -212,6 +277,34 @@ resource "aws_lambda_permission" "allow_eventbridge" {
   function_name = aws_lambda_function.torino_alert.function_name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.schedule.arn
+}
+
+# Riepilogo del mattino. EventBridge ragiona in UTC: si invoca alle due ore UTC che
+# possono corrispondere a digest_hour (ora solare e legale) e la Lambda invia solo
+# quando a Roma è davvero digest_hour, una volta al giorno.
+resource "aws_cloudwatch_event_rule" "digest" {
+  name                = "${local.name}-digest"
+  schedule_expression = "cron(0 ${var.digest_hour - 2},${var.digest_hour - 1} * * ? *)"
+}
+
+resource "aws_cloudwatch_event_target" "digest_target" {
+  rule      = aws_cloudwatch_event_rule.digest.name
+  target_id = "lambda-digest"
+  arn       = aws_lambda_function.torino_alert.arn
+  input     = jsonencode({ mode = "digest" })
+
+  retry_policy {
+    maximum_retry_attempts       = 1
+    maximum_event_age_in_seconds = 600
+  }
+}
+
+resource "aws_lambda_permission" "allow_eventbridge_digest" {
+  statement_id  = "AllowExecutionFromEventBridgeDigest"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.torino_alert.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.digest.arn
 }
 
 # -------------------------

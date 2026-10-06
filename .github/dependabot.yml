@@ -1,14 +1,24 @@
 version: 2
+# Una sola PR al mese per ecosistema, invece di una per pacchetto.
 updates:
   - package-ecosystem: pip
     directory: /
     schedule:
       interval: monthly
+    groups:
+      python:
+        patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
   - package-ecosystem: terraform
     directories: [/iac, /iac/bootstrap]
     schedule:
       interval: monthly
+    groups:
+      terraform:
+        patterns: ["*"]
