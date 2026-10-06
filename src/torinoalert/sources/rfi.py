@@ -1,4 +1,7 @@
 """RFI Infomobilità Piemonte (RSS). RFI aggiorna il titolo dello stesso item."""
+import calendar
+import time
+
 import feedparser
 
 from ..events import Event
@@ -30,7 +33,8 @@ def classify(text: str) -> str:
     return "MED"
 
 
-def parse(xml_bytes: bytes) -> list[Event]:
+def parse(xml_bytes: bytes, now: float | None = None) -> list[Event]:
+    now = now if now is not None else time.time()
     feed = feedparser.parse(xml_bytes)
     events = []
 
@@ -48,6 +52,8 @@ def parse(xml_bytes: bytes) -> list[Event]:
             continue
 
         guid = entry.get("id") or link or norm_key(title)
+        published = entry.get("published_parsed")
+        recent = published is not None and now - calendar.timegm(published) < 86400
         events.append(Event(
             id="rfi:" + sha(guid),
             source=SOURCE,
@@ -56,5 +62,6 @@ def parse(xml_bytes: bytes) -> list[Event]:
             body=summary,
             link=link,
             fingerprint=sha(norm_key(title) + "|" + norm_key(summary))[:16],
+            digest_line=title if recent else "",
         ))
     return events

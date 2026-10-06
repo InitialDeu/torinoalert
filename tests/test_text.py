@@ -4,7 +4,9 @@ import pytest
 
 from torinoalert.text import (
     dates_in_text,
+    distance_km,
     extract_line,
+    lines_in_text,
     normalize_body,
     strip_html,
     title_has_past_date,
@@ -61,3 +63,27 @@ def test_extract_line_ignores_numbers_in_dates():
 def test_title_with_line_does_not_duplicate():
     assert title_with_line("Linee 13 e 15 deviate") == "Linee 13 e 15 deviate"
     assert title_with_line("Falchera: la linea 4 torna") == "LINEA 4 — Falchera: la linea 4 torna"
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("Linee 13 e 15 deviate in entrambe le direzioni.", {"13", "15"}),
+        ("Linee 65 e 3382 deviate.", {"65", "3382"}),
+        (
+            "ripristinati i percorsi delle linee 10N – 11 – 67 Festiva – 77 – N10 GIALLA – B1 dal 24",
+            {"10N", "11", "67", "77", "N10", "B1"},
+        ),
+        ("Linea SE2: modifica di percorso", {"SE2"}),
+        ("la linea 4 torna dal 14 settembre", {"4"}),
+        ("Guasto in metropolitana, servizio sostitutivo", {"METRO"}),
+        ("linee urbane e suburbane", set()),
+    ],
+)
+def test_lines_in_text(text, expected):
+    assert lines_in_text(text) == expected
+
+
+def test_distance_km():
+    assert distance_km(45.0703, 7.6869) < 0.01
+    assert 25 < distance_km(45.055, 7.3627) < 27  # Giaveno

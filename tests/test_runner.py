@@ -1,33 +1,47 @@
+from datetime import datetime
+
+from torinoalert import subscriptions
 from torinoalert.config import Settings
 from torinoalert.events import Event
-from torinoalert.runner import bootstrap_key, health_key, run
+from torinoalert.runner import bootstrap_key, health_key, is_silent, run
+from torinoalert.sources import gtt
 from torinoalert.store import MemoryStore
 from torinoalert.telegram import TelegramError
+from torinoalert.text import ROME
 
-NOW = 1_800_000_000
+# Martedì 6 ottobre 2026, 12:00 a Roma: fuori dalla fascia notturna.
+NOW = int(datetime(2026, 10, 6, 12, 0, tzinfo=ROME).timestamp())
+NIGHT = int(datetime(2026, 10, 6, 2, 0, tzinfo=ROME).timestamp())
 DAY = 86400
 
 
 class FakeNotifier:
     def __init__(self, errors=None):
         self.sent: list[str] = []
+        self.calls: list[dict] = []
         self.admin: list[str] = []
         self.errors = list(errors or [])  # eccezioni da sollevare ai prossimi send
 
-    def send(self, text, chat_id=None):
+    def send(self, text, chat_id=None, silent=False, reply_to=None):
         if self.errors:
             err = self.errors.pop(0)
             if err is not None:
                 raise err
         self.sent.append(text)
+        self.calls.append({"text": text, "chat_id": chat_id, "silent": silent, "reply_to": reply_to})
+        return 1000 + len(self.sent)
 
     def send_admin(self, text):
         self.admin.append(text)
         return True
 
+    def channel(self):
+        return [c for c in self.calls if c["chat_id"] is None]
+
 
 def ev(id_, severity="MED", **kw):
-    return Event(id=id_, source="TEST", severity=severity, title=f"titolo {id_}", **kw)
+    kw.setdefault("title", f"titolo {id_}")
+    return Event(id=id_, source=kw.pop("source", "TEST"), severity=severity, **kw)
 
 
 def settings(**kw):
@@ -80,19 +94,22 @@ def test_dedup_and_ttl_refresh_while_still_published():
     r = do_run(src, store, tg, now=NOW + 2 * DAY)
     assert r["refreshed"] == 0 and store.data["a"]["expires_at"] == first_expiry
 
-    # 5 giorni dopo: oltre metà TTL, rinnovo; mai rinviato
+    # 5 giorni dopo: oltre metà TTL, rinnovo (conservando il message_id); mai rinviato
     r = do_run(src, store, tg, now=NOW + 5 * DAY)
     assert r["refreshed"] == 1 and store.data["a"]["expires_at"] == NOW + 12 * DAY
+    assert store.data["a"]["msg"] == 1001
     assert len(tg.sent) == 1
 
 
-def test_fingerprint_change_sends_update():
+def test_fingerprint_change_replies_to_original_message():
     store, tg = bootstrapped("S"), FakeNotifier()
     do_run({"S": lambda: [ev("r", fingerprint="v1")]}, store, tg)
     do_run({"S": lambda: [ev("r", fingerprint="v1")]}, store, tg)
     do_run({"S": lambda: [ev("r", fingerprint="v2")]}, store, tg)
     assert len(tg.sent) == 2
     assert "AGGIORNAMENTO" in tg.sent[1]
+    assert tg.calls[1]["reply_to"] == 1001  # risponde al primo messaggio
+    assert store.data["r"]["msg"] == 1002
 
 
 def test_silent_if_new_then_change_is_notified():
@@ -113,6 +130,41 @@ def test_cap_per_run_and_severity_order():
 
     do_run({"S": lambda: events}, store, tg, max_sends_per_run=2)
     assert len(tg.sent) == 4
+
+
+def test_quiet_hours_and_low_severity_are_silent():
+    s = settings()
+    assert is_silent("LOW", NOW, s) and is_silent("INFO", NOW, s)
+    assert not is_silent("MED", NOW, s) and not is_silent("HIGH", NOW, s)
+    assert is_silent("HIGH", NIGHT, s)
+    assert not is_silent("CRIT", NIGHT, s)
+
+    store, tg = bootstrapped("S"), FakeNotifier()
+    do_run({"S": lambda: [ev("a", "HIGH"), ev("b", "LOW")]}, store, tg)
+    assert [c["silent"] for c in tg.calls] == [False, True]
+
+
+def test_enrich_is_called_only_when_sending():
+    calls = []
+
+    def enrich():
+        calls.append(1)
+        return "corpo dell'articolo"
+
+    store, tg = bootstrapped("S"), FakeNotifier()
+    do_run({"S": lambda: [ev("a", enrich=enrich)]}, store, tg)
+    do_run({"S": lambda: [ev("a", enrich=enrich)]}, store, tg)
+    assert calls == [1]
+    assert "corpo dell'articolo" in tg.sent[0]
+
+
+def test_enrich_failure_still_sends():
+    def boom():
+        raise OSError("timeout")
+
+    store, tg = bootstrapped("S"), FakeNotifier()
+    do_run({"S": lambda: [ev("a", enrich=boom)]}, store, tg)
+    assert len(tg.sent) == 1
 
 
 def test_rate_limit_short_wait_retries():
@@ -153,7 +205,31 @@ def test_duplicate_ids_across_sources_sent_once():
     assert len(tg.sent) == 1
 
 
-def test_health_alert_after_threshold_and_recovery():
+def test_subscribers_get_gtt_events_in_private():
+    store, tg = bootstrapped("GTT"), FakeNotifier()
+    subscriptions.subscribe(store, 111, "13")
+    subscriptions.subscribe(store, 222, "4")
+    subscriptions.subscribe(store, 333, "METRO")
+
+    events = [
+        ev("g1", source=gtt.SOURCE, title="Linee 13 e 15 deviate in entrambe le direzioni."),
+        ev("other", source="TRAFFICO", title="Corso linea 13 chiuso"),  # non GTT: niente privati
+    ]
+    r = do_run({"GTT": lambda: events}, store, tg)
+    private = [c for c in tg.calls if c["chat_id"]]
+    assert [c["chat_id"] for c in private] == ["111"]
+    assert r["dm"] == 1 and len(tg.channel()) == 2
+
+
+def test_dm_cap():
+    store, tg = bootstrapped("GTT"), FakeNotifier()
+    for chat in range(5):
+        subscriptions.subscribe(store, chat, "4")
+    r = do_run({"GTT": lambda: [ev("g", source=gtt.SOURCE, title="Linea 4 deviata")]}, store, tg, max_dm_per_run=3)
+    assert r["dm"] == 3
+
+
+def test_health_alert_after_minutes_and_recovery():
     store, tg = bootstrapped("S"), FakeNotifier()
     state = {"fail": True}
 
@@ -162,15 +238,18 @@ def test_health_alert_after_threshold_and_recovery():
             raise OSError("connection refused")
         return []
 
-    for _ in range(3):
-        do_run({"S": flaky}, store, tg, health_alert_after=3)
-    assert len(tg.admin) == 1 and "fallisce da 3" in tg.admin[0]
+    for minute in (0, 10, 20):
+        do_run({"S": flaky}, store, tg, now=NOW + minute * 60, health_alert_minutes=30)
+    assert tg.admin == []  # 20 minuti: non ancora
 
-    do_run({"S": flaky}, store, tg, health_alert_after=3)
+    do_run({"S": flaky}, store, tg, now=NOW + 30 * 60, health_alert_minutes=30)
+    assert len(tg.admin) == 1 and "da 30 minuti" in tg.admin[0]
+
+    do_run({"S": flaky}, store, tg, now=NOW + 40 * 60, health_alert_minutes=30)
     assert len(tg.admin) == 1  # un solo avviso
 
     state["fail"] = False
-    do_run({"S": flaky}, store, tg, health_alert_after=3)
+    do_run({"S": flaky}, store, tg, now=NOW + 50 * 60, health_alert_minutes=30)
     assert len(tg.admin) == 2 and "funziona di nuovo" in tg.admin[1]
     assert store.data[health_key("S")]["failures"] == 0
 

@@ -1,4 +1,5 @@
 import hashlib
+import math
 import re
 from datetime import date, datetime, timedelta, timezone
 from html import unescape
@@ -24,6 +25,65 @@ def today_rome() -> date:
 def norm_key(text: str) -> str:
     """Forma canonica di un titolo per costruire ID stabili (spazi, maiuscole, punteggiatura)."""
     return re.sub(r"[^0-9a-zà-ù]+", " ", (text or "").lower()).strip()
+
+
+# ===============================
+# GEO
+# ===============================
+TORINO_LAT, TORINO_LON = 45.0703, 7.6869
+
+
+def distance_km(lat1: float, lon1: float, lat2: float = TORINO_LAT, lon2: float = TORINO_LON) -> float:
+    """Distanza in linea d'aria (haversine), di default da piazza Castello."""
+    dlat, dlon = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
+    return 6371 * 2 * math.asin(math.sqrt(a))
+
+
+def parse_it_date(text: str) -> date | None:
+    """Prima data gg/mm/aaaa nel testo."""
+    m = re.search(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b", text or "")
+    if not m:
+        return None
+    try:
+        return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+    except ValueError:
+        return None
+
+
+# ===============================
+# LINEE GTT NEL TESTO (iscrizioni)
+# ===============================
+_LINE_CODE_RE = re.compile(r"^(?:[A-Z]{1,3}\d{1,3}[A-Z]?|\d{1,4}[A-Z]{0,2})$")
+# Parole che seguono un codice senza chiudere l'elenco: "67 Festiva", "N10 GIALLA".
+_LINE_DESCRIPTORS = {"festiva", "feriale", "barrata", "gialla", "rossa", "verde", "blu", "notturna", "nera"}
+_LINE_SEPARATORS = {",", "e", "ed", "–", "-", "—", "/", "+"}
+
+
+def normalize_line(token: str) -> str | None:
+    """Codice linea canonico ("4", "SE2", "METRO") oppure None."""
+    t = (token or "").strip().upper().strip(".,;:()")
+    if t in ("METRO", "METROPOLITANA", "M1"):
+        return "METRO"
+    return t if _LINE_CODE_RE.match(t) else None
+
+
+def lines_in_text(text: str) -> set[str]:
+    """Linee citate: "linee 10N – 11 – 67 Festiva – N10 GIALLA", "linea SE2", "metro"."""
+    found: set[str] = set()
+    if re.search(r"\bmetro(politana)?\b", text or "", re.IGNORECASE):
+        found.add("METRO")
+    for m in re.finditer(r"\bline[ae]\b", text or "", re.IGNORECASE):
+        tokens = re.findall(r"[A-Za-zÀ-ù0-9]+|[,–—/+-]", text[m.end():m.end() + 160])
+        for tok in tokens:
+            code = normalize_line(tok)
+            if code and code != "METRO":
+                found.add(code)
+            elif tok.lower() in _LINE_SEPARATORS or tok.lower() in _LINE_DESCRIPTORS:
+                continue
+            else:
+                break
+    return found
 
 
 # ===============================

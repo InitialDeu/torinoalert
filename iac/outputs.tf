@@ -17,3 +17,8 @@ output "ssm_token_param" {
 output "ssm_chatid_param" {
   value = local.ssm_chatid_name
 }
+
+output "webhook_url" {
+  description = "URL dei comandi Telegram (registrato automaticamente dalla Lambda schedulata)."
+  value       = aws_lambda_function_url.webhook.function_url
+}

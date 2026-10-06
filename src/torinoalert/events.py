@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 
 from .text import normalize_body
 
@@ -21,15 +22,19 @@ class Event:
     # Se l'ID non è mai stato visto, registralo senza notificare (es. "allerta VERDE").
     silent_if_new: bool = False
     max_len: int = 900
+    # Riga per il riepilogo del mattino; vuota = l'evento non compare nel riepilogo.
+    digest_line: str = ""
+    # Testo aggiuntivo scaricato solo al momento dell'invio (es. corpo di un articolo).
+    enrich: Callable[[], str] | None = field(default=None, compare=False, repr=False)
 
-    def render(self, update: bool = False) -> str:
+    def render(self, update: bool = False, extra: str = "") -> str:
         emoji = SEVERITY_EMOJI.get(self.severity, "ℹ️")
         header = f"{emoji} {self.source} — TORINO"
         if update:
             header += " · 🔄 AGGIORNAMENTO"
 
         parts = [header, self.title.strip()]
-        body = normalize_body(self.source, self.title, self.body, max_len=self.max_len)
+        body = normalize_body(self.source, self.title, "\n\n".join(x for x in (self.body, extra) if x), self.max_len)
         if body:
             parts.append(body)
         if self.link:
