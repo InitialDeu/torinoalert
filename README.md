@@ -89,6 +89,7 @@ Every push to `main` runs lint and tests, then deploys with Terraform. GitHub au
    terraform init && terraform apply
    ```
    (Use `-var create_oidc_provider=false` if your account already has the GitHub OIDC provider.)
+   The role accepts both formats of GitHub's OIDC `sub` claim: the classic `repo:owner/repo:…` one and the newer one with immutable IDs (`repo:owner@ID/repo@ID:…`). For a fork, set `github_repository` and `github_repository_ids`; the IDs come from `https://api.github.com/repos/<owner>/<repo>` (`owner.id` and `id`).
 2. In the GitHub repository settings, add the variable `AWS_DEPLOY_ROLE_ARN` with the `deploy_role_arn` output. If you use them, also add the secrets `ADMIN_CHAT_ID` / `ALERT_EMAIL`; CI does not read your local tfvars.
 
 Until `AWS_DEPLOY_ROLE_ARN` is set, the deploy job is skipped and only the checks run.

@@ -33,6 +33,16 @@ variable "github_repository" {
   description = "owner/repo autorizzato ad assumere il ruolo (solo branch main)."
 }
 
+variable "github_repository_ids" {
+  type        = string
+  default     = "InitialDeu@64744009/torinoalert@1323391970"
+  description = <<-EOT
+    owner@id/repo@id come compare nel claim "sub" del nuovo formato GitHub (ID immutabili:
+    un repo omonimo ricreato da altri non potrebbe assumere il ruolo).
+    Gli ID si leggono da https://api.github.com/repos/<owner>/<repo> (owner.id e id).
+  EOT
+}
+
 variable "state_bucket" {
   type    = string
   default = "torinoalert-terraform-state"
@@ -74,7 +84,11 @@ resource "aws_iam_role" "deploy" {
       Condition = {
         StringEquals = {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-          "token.actions.githubusercontent.com:sub" = "repo:${var.github_repository}:ref:refs/heads/main"
+          # Formato classico e formato con ID immutabili (usato ora da GitHub per questo repo).
+          "token.actions.githubusercontent.com:sub" = [
+            "repo:${var.github_repository}:ref:refs/heads/main",
+            "repo:${var.github_repository_ids}:ref:refs/heads/main",
+          ]
         }
       }
     }]
