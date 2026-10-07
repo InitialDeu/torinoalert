@@ -222,13 +222,13 @@ def test_fiumi_collect_tolerates_partial_failures(fixture_bytes):
 
 def test_viabilita_torino(fixture_text):
     events = mato.parse_viabilita(fixture_text("mato_viabilita.html"), today=date(2026, 10, 8))
-    lanza = next(e for e in events if "Lanza" in e.title)
+    lanza = next(e for e in events if "lanza" in e.title.lower())
     assert lanza.title == "09/10 chiusura sottopasso lanza"
     assert "dalle 2:30 alle 4:30" in lanza.body and lanza.severity == "MED"
     assert lanza.link.endswith("?filter=723963") and not lanza.digest_line
     on_day = mato.parse_viabilita(fixture_text("mato_viabilita.html"), today=date(2026, 10, 9))
-    assert next(e for e in on_day if "Lanza" in e.title).digest_line
-    assert not any("Lanza" in e.title for e in mato.parse_viabilita(fixture_text("mato_viabilita.html"),
+    assert next(e for e in on_day if "lanza" in e.title.lower()).digest_line
+    assert not any("lanza" in e.title.lower() for e in mato.parse_viabilita(fixture_text("mato_viabilita.html"),
                                                                   today=date(2026, 10, 10)))
 
 
