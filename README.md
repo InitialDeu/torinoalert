@@ -6,23 +6,29 @@ A serverless bot that monitors public Turin-area sources (weather alerts, public
 
 ## What it does
 
-TorinoAlert polls 14 public sources **in parallel**. Fast-changing ones are checked every run (2 minutes); heavy or slow-changing ones every 10–60 minutes.
+TorinoAlert polls 19 public sources **in parallel**. Fast-changing ones are checked every run (2 minutes); heavy or slow-changing ones every 10–60 minutes.
 
 | Source | What | Every |
 |---|---|---|
 | **ARPA Piemonte – allerta** | Weather alerts (CAP XML) for the configured zones (default `Piem-L`, Turin), including the return to green | 10 min |
 | **ARPA – semaforo antismog** | Turin's anti-smog level today/tomorrow (JSON) | 30 min |
 | **ARPA – bollettino calore** | Heat-wave level for Turin, only while the bulletin is in season | 60 min |
-| **GTT – live** | "Avvisi ultima ora" (metro, bus, tram) | 2 min |
+| **GTT – GTFS-realtime** | Official service alerts (detours, suspensions, stops, metro lifts) with the affected lines and validity periods | 2 min |
 | **GTT – news** | Service notices RSS, promotional content filtered out | 10 min |
 | **RFI** | Regional rail disruptions; edits to the same item are sent as `🔄 AGGIORNAMENTO` | 2 min |
 | **Trenitalia** | Real-time notices touching Turin + "Infolavori Piemonte" (HTML) | 10 min |
 | **Scioperi (MIT)** | Strikes in public transport, rail, air, general — Piedmont or national; reminder the day before | 30 min |
-| **5T – Muoversi in Piemonte** | Road closures and roadworks within `traffic_radius_km` of Turin, regional public transport news | 10 min |
+| **5T – Muoversi in Piemonte** | Motorways, ring road and state roads (motorways up to 80 km), regional public transport news | 10 min |
+| **5T – Muoversi a Torino** | Traffic changes on Turin streets (underpasses, demonstrations, roadworks) with full text | 10 min |
+| **Caselle airport** | Cancelled flights and delays of 60+ minutes | 10 min |
+| **ARPA – rivers** | Po, Dora, Stura, Sangone, Ceronda levels against the official pre-alarm / guard / danger thresholds | 10 min |
+| **SITAF** | Monthly closure programmes for the A32 and the Fréjus tunnel (PDF) | 60 min |
 | **Città metropolitana** | Closures and restrictions on provincial roads (HTML table) | 30 min |
 | **Comune di Torino** | Roadworks/traffic and smog news, with the article text added to the message | 10–30 min |
 | **INGV** | Earthquakes: M2.5+ within 50 km, M3.5+ within 150 km, M4.5+ within 300 km; magnitude revisions are sent as updates | 2 min |
 | **SMAT** | Water service notices (interruptions, non-potable water) | 30 min |
+
+Each road event comes from exactly one source (Turin streets → Muoversi a Torino, provincial roads → Città metropolitana, motorways and state roads → 5T), so the same closure is never announced twice.
 
 Each event is classified by severity (`CRIT` / `HIGH` / `MED` / `LOW` / `INFO`), deduplicated and sent to the channel, most severe first.
 
@@ -32,9 +38,10 @@ Each event is classified by severity (`CRIT` / `HIGH` / `MED` / `LOW` / `INFO`),
 - **Threaded updates**: when a notice changes (rail line back to normal, alert level down, magnitude revised), the update is sent as a reply to the original message.
 - **Morning summary** at 07:00 on the channel: weather, alerts, strikes, GTT, trains, road closures active today, anti-smog level.
 - **Private commands** (write to the bot):
-  - `/linea 4`, `/linea metro`, `/linea SE2` — receive GTT notices for your lines in private
+  - `/linea 4`, `/linea metro`, `/linea SE2` — receive GTT notices for your lines in private (matched on the lines GTT declares in each alert)
   - `/stop 4` (or `/stop` for all), `/linee`
   - `/oggi` — the summary of what is going on right now
+  - `/id` — your chat ID, to configure `admin_chat_id`
 
 ### How a run works
 
@@ -149,6 +156,7 @@ Terraform variables (`iac/variables.tf`), passed to the Lambda as environment va
 │       ├── digest.py              # morning summary and /oggi
 │       ├── bot.py                 # private chat commands
 │       ├── subscriptions.py       # line subscriptions
+│       ├── gtfsrt.py              # dependency-free GTFS-realtime alerts decoder
 │       ├── store.py               # DynamoDB / file / in-memory state
 │       ├── telegram.py            # Telegram client (429-aware)
 │       ├── events.py              # Event model + message formatting

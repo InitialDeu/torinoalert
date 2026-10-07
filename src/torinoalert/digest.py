@@ -10,8 +10,8 @@ from .text import MONTHS, ROME
 
 # Ordine delle sezioni: prima ciò che cambia la giornata.
 SECTION_ORDER = [
-    "ALLERTA METEO", "SCIOPERI", "TRASPORTO PUBBLICO (GTT)", "TRENI (TRENITALIA)", "FERROVIE (RFI)",
-    "TRAFFICO", "SEMAFORO ANTISMOG", "BOLLETTINO CALORE",
+    "ALLERTA METEO", "FIUMI", "SCIOPERI", "TRASPORTO PUBBLICO (GTT)", "TRENI (TRENITALIA)", "FERROVIE (RFI)",
+    "VIABILITÀ TORINO", "TRAFFICO", "SEMAFORO ANTISMOG", "BOLLETTINO CALORE",
 ]
 MAX_PER_SECTION = 6
 _WEEKDAYS = ["lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato", "domenica"]

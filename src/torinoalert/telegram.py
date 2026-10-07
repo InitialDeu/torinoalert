@@ -7,6 +7,7 @@ COMMANDS = [
     ("linea", "Segui una linea GTT, es. /linea 4 o /linea metro"),
     ("stop", "Smetti di seguire una linea, es. /stop 4 (senza numero: tutte)"),
     ("linee", "Le linee che segui"),
+    ("id", "Il tuo chat ID"),
     ("help", "Come funziona il bot"),
 ]
 

@@ -104,3 +104,7 @@ def test_digest_survives_weather_failure():
     store, tg = MemoryStore(), Notifier()
     run_digest({}, store, tg, Settings(), boom, now=MORNING)
     assert len(tg.sent) == 1
+
+
+def test_id_command():
+    assert reply(MemoryStore(), "/id", chat_id=987654) == "Il tuo chat ID è: 987654"

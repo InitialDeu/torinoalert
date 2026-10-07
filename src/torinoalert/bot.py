@@ -14,6 +14,7 @@ HELP = (
     "/stop 4 — smetti di seguirla (/stop da solo: tutte)\n"
     "/linee — le linee che segui\n"
     "/oggi — riepilogo dei disservizi attivi adesso\n"
+    "/id — il tuo chat ID (per configurare gli avvisi tecnici)\n"
     "/help — questo messaggio"
 )
 
@@ -34,6 +35,8 @@ def reply_for(text: str, chat_id, store, today: Callable[[], str]) -> str:
 
     if cmd in ("start", "help", "aiuto"):
         return HELP
+    if cmd == "id":
+        return f"Il tuo chat ID è: {chat_id}"
     if cmd == "oggi":
         return today()
     if cmd == "linee":

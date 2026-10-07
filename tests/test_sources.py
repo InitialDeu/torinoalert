@@ -62,13 +62,41 @@ def test_arpa_other_zones_and_expired_are_ignored(fixture_bytes):
 
 # ---------- GTT ----------
 
-def test_gtt_live(fixture_text):
-    events = gtt.parse_live(fixture_text("gtt_live.html"))
-    assert [e.title for e in events] == ["Linee 13 e 15 deviate in entrambe le direzioni.", "Linee 65 e 3382 deviate."]
-    assert all(e.severity == "MED" for e in events)
-    assert events[0].link == "https://www.gtt.to.it/cms/percorari/urbano"
-    # ID stabili tra un'esecuzione e l'altra
-    assert [e.id for e in events] == [e.id for e in gtt.parse_live(fixture_text("gtt_live.html"))]
+# Mercoledì 7 ottobre 2026, 20:00 a Roma: tutti gli avvisi della fixture sono attivi.
+GTT_NOW = 1791396000
+
+
+def test_gtt_alerts_lines_from_routes_and_text(fixture_bytes):
+    events = {e.title: e for e in gtt.parse_alerts(fixture_bytes("gtt_alerts.pb"), now=GTT_NOW)}
+    assert events["Linea 17 deviata in entrambe le direzioni"].lines == ("17",)
+    assert events["Linea 36N deviata in entrambe le direzioni"].lines == ("36N",)
+    # Avviso senza route_id: le linee si ricavano dal titolo.
+    assert events["Linee 13 e 15 deviate in entrambe le direzioni."].lines == ("13", "15")
+
+
+def test_gtt_alerts_severity_and_periods(fixture_bytes):
+    events = {e.title: e for e in gtt.parse_alerts(fixture_bytes("gtt_alerts.pb"), now=GTT_NOW)}
+    # La descrizione dice "riprende regolare percorso", ma resta una deviazione.
+    assert events["Linea 17 deviata in entrambe le direzioni"].severity == "MED"
+    assert "Quando: dal mer 07/10 10:11 al dom 11/10 21:59" in events["Linea 17 deviata in entrambe le direzioni"].body
+    elevator = next(e for t, e in events.items() if "ascensori" in t)
+    assert elevator.title.startswith("🛗") and elevator.severity == "LOW" and elevator.lines == ("METRO",)
+    assert "fino a nuova comunicazione" in elevator.body and not elevator.digest_line
+
+
+def test_gtt_alerts_skip_finished_and_ids_stable(fixture_bytes):
+    data = fixture_bytes("gtt_alerts.pb")
+    now_ids = [e.id for e in gtt.parse_alerts(data, now=GTT_NOW)]
+    assert now_ids == [e.id for e in gtt.parse_alerts(data, now=GTT_NOW)]
+    later = gtt.parse_alerts(data, now=GTT_NOW + 30 * 86400)
+    assert len(later) < len(now_ids) and all("ascensori" in e.title for e in later)
+
+
+def test_route_to_line():
+    assert gtt.route_to_line("17U") == "17"
+    assert gtt.route_to_line("1432E") == "1432"
+    assert gtt.route_to_line("36NU") == "36N"
+    assert gtt.route_to_line("METROU") == "METRO"
 
 
 def test_gtt_news_filters_promotions(fixture_bytes):

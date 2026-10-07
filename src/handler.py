@@ -19,7 +19,8 @@ from torinoalert.log import log
 from torinoalert.runner import run
 from torinoalert.sources import all_sources, default_sources, due_sources, weather_line
 from torinoalert.store import DynamoStore
-from torinoalert.telegram import Telegram
+from torinoalert.telegram import COMMANDS, Telegram
+from torinoalert.text import sha
 
 _ssm = boto3.client("ssm")
 _telegram: Telegram | None = None
@@ -50,15 +51,17 @@ def _get_store() -> DynamoStore:
 
 
 def _ensure_webhook(telegram: Telegram, store: DynamoStore) -> None:
-    """Registra il webhook dei comandi su Telegram quando l'URL cambia (di solito una volta sola)."""
+    """Registra webhook e menu comandi su Telegram quando cambiano l'URL o i comandi."""
     url = os.environ.get("WEBHOOK_URL", "")
     if not url:
         return
-    if store.get_many([WEBHOOK_META]).get(WEBHOOK_META, {}).get("url") == url:
+    commands = sha(repr(COMMANDS))[:12]
+    current = store.get_many([WEBHOOK_META]).get(WEBHOOK_META, {})
+    if current.get("url") == url and current.get("commands") == commands:
         return
     try:
         telegram.set_webhook(url, bot.webhook_secret(telegram.token))
-        store.put(WEBHOOK_META, {"url": url, "updated_at": int(time.time())})
+        store.put(WEBHOOK_META, {"url": url, "commands": commands, "updated_at": int(time.time())})
         log("webhook_registered", url=url)
     except Exception as e:
         log("webhook_register_failed", error=repr(e))

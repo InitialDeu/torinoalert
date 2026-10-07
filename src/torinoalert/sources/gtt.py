@@ -1,11 +1,15 @@
-"""GTT: avvisi "ultima ora" (pagina raw) e news di servizio (RSS)."""
+"""GTT: avvisi ufficiali in GTFS-realtime e news di servizio (RSS)."""
+import re
+import time
+from datetime import datetime
+
 import feedparser
-from bs4 import BeautifulSoup
 
+from .. import gtfsrt
 from ..events import Event
-from ..text import norm_key, sha, strip_html, title_with_line
+from ..text import ROME, lines_in_text, norm_key, normalize_line, sha, strip_html, title_with_line
 
-LIVE_URL = "https://www.gtt.to.it/cms/index.php?option=com_gtt&priorita=1&tmpl=raw&view=avvisi"
+ALERTS_URL = "https://percorsieorari.gtt.to.it/das_gtfsrt/alerts.aspx"
 NEWS_URL = "https://www.gtt.to.it/cms/avvisi-e-informazioni-di-servizio?format=feed&type=rss"
 LINK = "https://www.gtt.to.it/cms/avvisi-e-informazioni-di-servizio"
 SOURCE = "TRASPORTO PUBBLICO (GTT)"
@@ -25,6 +29,7 @@ OPERATIONAL = [
 
 
 RESTORED = ["ripristin", "riprend", "torna", "riapr", "regolare"]
+_DAYS = ["lun", "mar", "mer", "gio", "ven", "sab", "dom"]
 
 
 def _severity_of(text: str) -> str | None:
@@ -49,7 +54,7 @@ def _relevant(text: str) -> bool:
     )
 
 
-def _make_event(event_id: str, title: str, body: str, link: str, digest: bool = False) -> Event:
+def _make_event(event_id: str, title: str, body: str, link: str) -> Event:
     severity = _severity(title, body)
     is_parking = "parcheggio" in title.lower()
     title = title_with_line(title)
@@ -62,31 +67,85 @@ def _make_event(event_id: str, title: str, body: str, link: str, digest: bool = 
         title=title,
         body=body,
         link=link or LINK,
-        digest_line=title if digest else "",
     )
 
 
-def parse_live(html: str) -> list[Event]:
-    soup = BeautifulSoup(html, "html.parser")
+def route_to_line(route_id: str) -> str | None:
+    """route_id GTFS GTT ("17U" urbana, "1432E" extraurbana, "METROU") -> codice linea."""
+    rid = (route_id or "").strip().upper()
+    if rid.startswith("METRO"):
+        return "METRO"
+    return normalize_line(rid[:-1] if rid[-1:] in ("U", "E") else rid)
+
+
+def _fmt_time(ts: int, now: float) -> str:
+    dt = datetime.fromtimestamp(ts, ROME)
+    year = "" if dt.year == datetime.fromtimestamp(now, ROME).year else f"/{dt.year}"
+    return f"{_DAYS[dt.weekday()]} {dt:%d/%m}{year} {dt:%H:%M}"
+
+
+def _periods_text(periods: list[tuple[int, int]], now: float) -> str:
+    parts = []
+    for start, end in periods[:3]:
+        # GTT mette una fine fittizia (circa un anno) agli avvisi "sino a nuove comunicazioni".
+        open_ended = not end or end - now > 180 * 86400
+        if start and open_ended:
+            parts.append(f"dal {_fmt_time(start, now)} fino a nuova comunicazione")
+        elif start:
+            parts.append(f"dal {_fmt_time(start, now)} al {_fmt_time(end, now)}")
+        elif not open_ended:
+            parts.append(f"fino al {_fmt_time(end, now)}")
+    if len(periods) > 3:
+        parts.append(f"e altri {len(periods) - 3} periodi")
+    return ("Quando: " + "; ".join(parts)) if parts else ""
+
+
+def _alert_severity(alert: gtfsrt.Alert, title: str) -> str:
+    # Solo titolo ed effetto: le descrizioni delle deviazioni contengono sempre
+    # "riprende regolare percorso" o "fermata sospesa".
+    t = title.lower()
+    if "ascensor" in t or t.startswith("fermata"):
+        return "LOW"  # ascensori e singole fermate: utili, ma non devono far suonare
+    if any(x in t for x in RESTORED):
+        return "INFO"
+    if alert.effect == 1 or any(x in t for x in ("sospes", "interrott", "interruz", "sciopero")):
+        return "HIGH"
+    return "MED"
+
+
+def parse_alerts(data: bytes, now: float | None = None) -> list[Event]:
+    """Avvisi ufficiali GTT in GTFS-realtime: linee coinvolte, periodi, deviazioni, ascensori metro."""
+    now = now if now is not None else time.time()
     events = []
-
-    for block in soup.select("div.avviso"):
-        heading = block.find(["h4", "h3"])
-        title = heading.get_text(" ", strip=True) if heading else ""
-        if not title:
-            continue
-        stamp_el = block.select_one("span.small")
-        stamp = stamp_el.get_text(" ", strip=True) if stamp_el else ""
-        body = " ".join(p.get_text(" ", strip=True) for p in block.find_all("p"))
-        link_el = block.find("a", href=True)
-
-        if not _relevant(f"{title} {body}".lower()):
-            continue
-        # Data di pubblicazione + titolo: lo stesso avviso ripubblicato un altro
-        # giorno ("Luci d'artista") è una nuova notifica, una modifica al testo no.
-        events.append(_make_event(
-            "gtt-live:" + sha(stamp + "|" + norm_key(title)),
-            title, body, link_el["href"] if link_el else "", digest=True,
+    for alert in gtfsrt.parse_alerts(data):
+        if alert.periods and all(end and end < now for _, end in alert.periods):
+            continue  # già concluso
+        title = re.sub(r"\s+", " ", alert.header).strip() or gtfsrt.EFFECTS.get(alert.effect, "Avviso").capitalize()
+        description = alert.description.strip()
+        text = f"{title} {description}".lower()
+        lines = {line for line in map(route_to_line, alert.routes) if line} | lines_in_text(title)
+        elevator = "ascensor" in text
+        active_now = not alert.periods or any(
+            (not start or start <= now) and (not end or end >= now) for start, end in alert.periods
+        )
+        cause = gtfsrt.CAUSES.get(alert.cause, "")
+        body = "\n".join(x for x in (
+            _periods_text(alert.periods, now),
+            description,
+            f"Causa: {cause}" if cause and alert.cause not in (1, 2) and cause not in text else "",
+        ) if x)
+        events.append(Event(
+            id=f"gtt-rt:{alert.id}",
+            source=SOURCE,
+            severity=_alert_severity(alert, title),
+            title=("🛗 " + title) if elevator else title_with_line(title),
+            body=body,
+            link=alert.url or LINK,
+            # GTT aggiorna lo stesso avviso (nuovo orario, ascensore riparato): si risponde al messaggio.
+            fingerprint=sha(norm_key(title) + "|" + norm_key(description) + "|" + repr(alert.periods))[:16],
+            lines=tuple(sorted(lines)),
+            max_len=1200,
+            digest_line=title if active_now and not elevator else "",
         ))
     return events
 

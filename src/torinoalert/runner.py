@@ -204,7 +204,11 @@ def _deliver(notifier, text, kwargs, settings, deadline, sleep, clock) -> tuple[
 
 def _notify_subscribers(sent, store, notifier, settings, now, deadline, clock) -> int:
     """Inoltra in privato gli avvisi GTT a chi segue le linee citate."""
-    by_event = [(ev, text, lines_in_text(f"{ev.title} {ev.body}")) for ev, text in sent if ev.source == gtt.SOURCE]
+    by_event = [
+        (ev, text, set(ev.lines) or lines_in_text(f"{ev.title} {ev.body}"))
+        for ev, text in sent
+        if ev.source == gtt.SOURCE
+    ]
     wanted = set().union(*(lines for _, _, lines in by_event)) if by_event else set()
     if not wanted:
         return 0

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from ..config import Settings
 from ..events import Event
 from ..http import fetch_bytes, fetch_text
-from . import aria, arpa, cittametro, comune, gtt, ingv, muoversi, rfi, scioperi, smat, trenitalia
+from . import aria, arpa, cittametro, comune, fiumi, gtt, ingv, mato, muoversi, rfi, scioperi, sitaf, smat, trenitalia
 
 
 @dataclass(frozen=True)
@@ -19,7 +19,7 @@ def all_sources(settings: Settings) -> dict[str, Source]:
     t = settings.http_timeout
     return {
         "ARPA": Source(lambda: arpa.parse(fetch_bytes(arpa.URL, t), zones=settings.arpa_zones), 10),
-        "GTT_LIVE": Source(lambda: gtt.parse_live(fetch_text(gtt.LIVE_URL, t)), 2),
+        "GTT_RT": Source(lambda: gtt.parse_alerts(fetch_bytes(gtt.ALERTS_URL, t)), 2),
         "GTT_NEWS": Source(lambda: gtt.parse_news(fetch_bytes(gtt.NEWS_URL, t)), 10),
         "RFI": Source(lambda: rfi.parse(fetch_bytes(rfi.URL, t)), 2),
         "TRENITALIA": Source(lambda: trenitalia.parse(fetch_text(trenitalia.URL, t)), 10),
@@ -32,6 +32,11 @@ def all_sources(settings: Settings) -> dict[str, Source]:
         "CALDO": Source(lambda: aria.parse_caldo(fetch_bytes(aria.CALDO_URL, t)), 60),
         "TERREMOTI": Source(lambda: ingv.parse(fetch_bytes(ingv.url(), t)), 2),
         "SMAT": Source(lambda: smat.parse(fetch_bytes(smat.URL, t)), 30),
+        "FIUMI": Source(lambda: fiumi.collect(fetch_bytes, t), 10),
+        "VIABILITA_TORINO": Source(lambda: mato.parse_viabilita(fetch_text(mato.VIABILITA_URL, t)), 10),
+        "AEROPORTO": Source(lambda: mato.parse_aeroporto(fetch_text(mato.HOME_URL, t)), 10),
+        "SITAF_A32": Source(lambda: sitaf.parse(fetch_text(sitaf.A32_URL, t), "A32"), 60),
+        "SITAF_FREJUS": Source(lambda: sitaf.parse(fetch_text(sitaf.T4_URL, t), "Traforo del Frejus"), 60),
     }
 
 

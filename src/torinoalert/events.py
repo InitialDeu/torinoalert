@@ -24,6 +24,8 @@ class Event:
     max_len: int = 900
     # Riga per il riepilogo del mattino; vuota = l'evento non compare nel riepilogo.
     digest_line: str = ""
+    # Linee GTT coinvolte quando la fonte le dichiara (GTFS); altrimenti dedotte dal testo.
+    lines: tuple[str, ...] = ()
     # Testo aggiuntivo scaricato solo al momento dell'invio (es. corpo di un articolo).
     enrich: Callable[[], str] | None = field(default=None, compare=False, repr=False)
 

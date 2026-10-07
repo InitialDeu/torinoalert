@@ -26,6 +26,20 @@ def page_props(html: str) -> dict:
     return json.loads(m.group(1))["props"]["pageProps"]
 
 
+# Divisione dei compiti tra le fonti stradali, per non avvisare due volte:
+# vie di Torino -> Muoversi a Torino, strade provinciali -> Città metropolitana,
+# qui restano autostrade, tangenziale, statali e raccordi.
+_PROVINCIAL = re.compile(r"strada provinciale|\bS\.?P\.?\s?\d", re.IGNORECASE)
+_CITY_STREET = re.compile(r"\(TO\)")
+_MOTORWAY = re.compile(
+    r"\b(A ?(?:4|5|6|21|32|55)|T4|tangenziale|raccordo|diramazione|traforo|fr[eé]jus|autostrada)\b",
+    re.IGNORECASE,
+)
+MOTORWAY_RADIUS_KM = 80
+# Entro questo raggio le strade ordinarie sono vie di Torino (anche senza "(TO)").
+CITY_RADIUS_KM = 7
+
+
 def _dt(value: str) -> datetime | None:
     try:
         return datetime.fromisoformat(value)
@@ -41,14 +55,17 @@ def parse_traffic(props: dict, radius_km: float, now: datetime | None = None) ->
             km = distance_km(float(e["lat"]), float(e["lng"]))
         except (KeyError, TypeError, ValueError):
             continue
-        if km > radius_km:
+        road = (e.get("road") or "").strip()
+        if _MOTORWAY.search(road):
+            if km > MOTORWAY_RADIUS_KM:
+                continue
+        elif km > radius_km or km <= CITY_RADIUS_KM or _PROVINCIAL.search(road) or _CITY_STREET.search(road):
             continue
         start, end = _dt(e.get("startDate")), _dt(e.get("endDate"))
         if end and end < now:
             continue
 
         closure = e.get("style") == "chiusura"
-        road = (e.get("road") or "").strip()
         what = (e.get("what") or "").strip()
         active_today = start is not None and start.date() <= now.date() and (end is None or end.date() >= now.date())
         events.append(Event(
