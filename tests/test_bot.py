@@ -108,3 +108,28 @@ def test_digest_survives_weather_failure():
 
 def test_id_command():
     assert reply(MemoryStore(), "/id", chat_id=987654) == "Il tuo chat ID è: 987654"
+
+
+def test_follow_topics():
+    store = MemoryStore()
+    assert "Ora segui «treni»" in reply(store, "/segui treni")
+    assert "treni, aeroporto" in reply(store, "/segui aeroporto")
+    assert "Argomenti che segui: treni, aeroporto" in reply(store, "/linee")
+    assert "✅ treni" in reply(store, "/argomenti") and "▫️ traffico" in reply(store, "/argomenti")
+    assert subscriptions.recipients(store, set(), {"treni"})[1] == {"treni": ["42"]}
+    assert "Argomenti che segui: aeroporto" in reply(store, "/nonseguire treni")
+    assert "nessuno" in reply(store, "/nonseguire")
+
+
+def test_follow_invalid_topic_lists_topics():
+    reply_text = reply(MemoryStore(), "/segui boh")
+    assert reply_text.startswith("Argomento non valido") and "extraurbane" in reply_text
+    assert reply(MemoryStore(), "/segui").startswith("Argomenti (/segui <nome>)")
+
+
+def test_lines_and_topics_do_not_overwrite_each_other():
+    store = MemoryStore()
+    reply(store, "/linea 4")
+    reply(store, "/segui treni")
+    reply(store, "/stop 4")
+    assert subscriptions.topics_of(store, 42) == ["treni"]

@@ -30,16 +30,34 @@ TorinoAlert polls 19 public sources **in parallel**. Fast-changing ones are chec
 
 Each road event comes from exactly one source (Turin streets → Muoversi a Torino, provincial roads → Città metropolitana, motorways and state roads → 5T), so the same closure is never announced twice.
 
-Each event is classified by severity (`CRIT` / `HIGH` / `MED` / `LOW` / `INFO`), deduplicated and sent to the channel, most severe first.
+Each event is classified by severity (`CRIT` / `HIGH` / `MED` / `LOW` / `INFO`) and deduplicated.
+
+### Channel vs. on request
+
+The channel only carries what matters to the whole city; detail is opt-in, so nothing is lost and nobody has to mute the channel.
+
+| On the channel | Only to who follows it (`/segui <topic>`) |
+|---|---|
+| Weather alerts, rivers, earthquakes, strikes | `extraurbane` — GTT extra-urban lines and regional public transport |
+| GTT urban lines and metro (detours are silent; suspensions and metro problems ring) | `fermate` — single GTT stops suspended or moved |
+| Rail **suspensions/interruptions** | `treni` — rail works and minor disruptions |
+| Turin street closures, city news, anti-smog, water | `traffico` — motorways, ring road, state roads, A32/Fréjus closure programmes |
+| **Cancelled** flights | `provinciali` — provincial roads |
+| Morning summary | `aeroporto` — flight delays |
+
+If an event was published on the channel, its updates stay on the channel as replies even when they would otherwise be opt-in (e.g. a rail line back to normal after a suspension).
 
 ### Telegram features
 
+- **Recognisable messages**: every message starts with a category icon and the source (🚌 GTT, 🚆 trains, 🚗 traffic, 🚧 city roads, 🌊 rivers, ⛈️ weather, ✊ strikes, ✈️ airport, 💧 water, 🌫️ smog…), the urgency in words when it matters (`🔴 URGENTE`, `🟠 IMPORTANTE`), and ends with hashtags (`#GTT #linea17`) to search or filter in Telegram.
 - **Silent notifications**: `LOW` and `INFO` messages never ring; between 23:00 and 07:00 only `CRIT` does.
-- **Threaded updates**: when a notice changes (rail line back to normal, alert level down, magnitude revised), the update is sent as a reply to the original message.
-- **Morning summary** at 07:00 on the channel: weather, alerts, strikes, GTT, trains, road closures active today, anti-smog level.
+- **Threaded, rate-limited updates**: when a notice changes, the update is a reply to the original message. Updates go out immediately if the severity changes, otherwise at most once per hour per notice (sources such as Trenitalia rewrite the same notice every few minutes).
+- **Morning summary** at 07:00 on the channel: weather, alerts, rivers, strikes, GTT, trains, city closures, road closures active today, anti-smog level.
 - **Private commands** (write to the bot):
-  - `/linea 4`, `/linea metro`, `/linea SE2` — receive GTT notices for your lines in private (matched on the lines GTT declares in each alert)
-  - `/stop 4` (or `/stop` for all), `/linee`
+  - `/linea 4`, `/linea metro`, `/linea SE2`, `/linea 1432` — GTT notices for your lines, including extra-urban ones (matched on the lines GTT declares in each alert)
+  - `/stop 4` (or `/stop` for all)
+  - `/segui treni`, `/nonseguire treni` (or `/nonseguire` for all), `/argomenti` — opt-in topics
+  - `/linee` — your lines and topics
   - `/oggi` — the summary of what is going on right now
   - `/id` — your chat ID, to configure `admin_chat_id`
 
@@ -48,7 +66,7 @@ Each event is classified by severity (`CRIT` / `HIGH` / `MED` / `LOW` / `INFO`),
 1. **Collect** – the sources due in this run are fetched concurrently with short timeouts; a slow or broken source never blocks the others.
 2. **Deduplicate** – one DynamoDB `BatchGetItem` per run. An event stays "seen" for as long as it is published, plus `dedup_ttl_days` (default 7): the TTL is refreshed while the event is still visible, so long-running notices are never re-sent.
 3. **Bootstrap** – the first time a source is collected (fresh deploy, new source), its current events are recorded **silently**, so the channel is not flooded with old news.
-4. **Send** – at most `max_sends_per_run` channel messages per run (default 10), ordered by severity. Telegram `429` responses are honoured (`retry_after`); anything not sent is retried on the next run. GTT notices are then forwarded privately to whoever follows the lines they mention.
+4. **Send** – ordered by severity: channel events go to the channel (at most `max_sends_per_run`, default 10, per run) and privately to whoever follows the GTT lines they mention; opt-in events go privately to whoever follows the topic or the lines. Telegram `429` responses are honoured (`retry_after`); anything not sent is retried on the next run.
 5. **Health** – failures are tracked per source. After 30 minutes of errors a message goes to the optional admin chat, and another one when the source recovers.
 
 ## Cost: €0

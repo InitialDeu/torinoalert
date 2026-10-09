@@ -112,6 +112,7 @@ def parse_aeroporto(html: str, now: datetime | None = None, min_delay: int = 60)
                 id=f"volo:{now:%Y-%m-%d}:{flight}:{sched}",
                 source=SOURCE_AIRPORT,
                 severity="MED" if cancelled else "LOW",
+                topic="" if cancelled else "aeroporto",  # sul canale solo le cancellazioni
                 title=f"✈️ {kind} {place.title()} ({flight}) {what}",
                 body=f"Orario previsto {sched} — stato: {status}",
                 link=HOME_URL,

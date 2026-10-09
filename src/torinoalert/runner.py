@@ -1,13 +1,18 @@
 """
 Un'esecuzione completa:
 raccolta parallela -> dedup (con fingerprint e TTL rinnovato) -> bootstrap
-silenzioso delle fonti nuove -> invio al canale ordinato per gravità (con
-tetto, 429, notte silenziosa, risposte al messaggio originale) -> messaggi
-privati agli iscritti alle linee -> salute delle fonti con avviso admin.
+silenzioso delle fonti nuove -> consegna ordinata per gravità:
+  - eventi senza argomento: canale (tetto, 429, notte silenziosa, risposte al
+    messaggio originale) + privato a chi segue le linee GTT citate;
+  - eventi con argomento: solo in privato a chi segue l'argomento o le linee;
+  - aggiornamenti: subito se cambia la gravità, altrimenti al massimo uno ogni
+    `update_min_interval_minutes`;
+-> salute delle fonti con avviso admin.
 """
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from . import subscriptions
@@ -58,11 +63,33 @@ def is_silent(severity: str, now: float, settings: Settings) -> bool:
     return night and severity != "CRIT"
 
 
-def _record(ev: Event, now: int, ttl: int, msg: int | None = None) -> dict:
-    item = {"fp": ev.fingerprint, "expires_at": now + ttl}
+def _record(ev: Event, now: int, ttl: int, prev: dict | None = None, msg: int | None = None,
+            delivered: bool = False) -> dict:
+    """Stato dell'evento: fingerprint, scadenza, messaggio sul canale, ultima consegna."""
+    prev = prev or {}
+    item = {"fp": ev.fingerprint, "expires_at": now + ttl, "sev": ev.severity,
+            "sent_at": now if delivered else int(prev.get("sent_at", 0))}
+    msg = msg or prev.get("msg")
     if msg:
         item["msg"] = int(msg)
     return item
+
+
+def _event_lines(ev: Event) -> set[str]:
+    if ev.source != gtt.SOURCE:
+        return set()
+    return set(ev.lines) or lines_in_text(f"{ev.title} {ev.body}")
+
+
+@dataclass
+class _Outcome:
+    channel: int = 0
+    dm: int = 0
+    private_only: int = 0
+    dropped: int = 0
+    failed: int = 0
+    throttled: int = 0
+    handled: set = field(default_factory=set)
 
 
 def run(
@@ -110,7 +137,7 @@ def run(
                 pending.append((ev, rec))
             elif int(rec.get("expires_at", 0)) - now < ttl // 2:
                 # Ancora pubblicato: rinnova il TTL, scadrà solo dopo che sparisce dalla fonte.
-                store.put(ev.id, _record(ev, now, ttl, rec.get("msg")))
+                store.put(ev.id, _record(ev, now, ttl, prev=rec))
                 refreshed += 1
         if bootstrapping:
             store.put(bootstrap_key(name), {"created_at": now})
@@ -119,17 +146,18 @@ def run(
     _update_health(sources, results, records, store, notifier, settings, now)
 
     pending.sort(key=lambda p: SEVERITY_RANK.get(p[0].severity, len(SEVERITY_RANK)))
-    sent_events, dropped, failed = _send_all(pending, store, notifier, settings, now, ttl, deadline, sleep, clock)
-    dms = _notify_subscribers(sent_events, store, notifier, settings, now, deadline, clock)
+    out = _deliver_all(pending, store, notifier, settings, now, ttl, deadline, sleep, clock)
     store.flush()
 
     summary = {
         "status": "ok",
-        "sent": len(sent_events),
-        "dm": dms,
-        "pending": len(pending) - len(sent_events) - dropped,
-        "dropped": dropped,
-        "failed": failed,
+        "sent": out.channel,
+        "dm": out.dm,
+        "private_only": out.private_only,
+        "throttled": out.throttled,
+        "pending": len(pending) - len(out.handled),
+        "dropped": out.dropped,
+        "failed": out.failed,
         "silenced": silenced,
         "refreshed": refreshed,
         "events": len(ids),
@@ -142,44 +170,96 @@ def run(
     return summary
 
 
-def _send_all(pending, store, notifier, settings, now, ttl, deadline, sleep, clock):
-    sent: list[tuple[Event, str]] = []
-    dropped = failed = 0
+def _update_due(ev: Event, rec: dict, now: int, settings: Settings) -> bool:
+    """Un aggiornamento parte subito se cambia la gravità, altrimenti non più di uno ogni N minuti."""
+    if rec.get("sev") != ev.severity:
+        return True
+    return now - int(rec.get("sent_at", 0)) >= settings.update_min_interval_minutes * 60
+
+
+def _deliver_all(pending, store, notifier, settings, now, ttl, deadline, sleep, clock) -> _Outcome:
+    out = _Outcome()
+    # Destinatari privati letti una volta sola per tutto il giro.
+    lines_needed = set().union(*(_event_lines(ev) for ev, _ in pending)) if pending else set()
+    topics_needed = {ev.topic for ev, _ in pending if ev.topic}
+    by_line, by_topic = subscriptions.recipients(store, lines_needed, topics_needed)
+
     for ev, rec in pending:
-        if len(sent) >= settings.max_sends_per_run:
-            break
         if deadline is not None and clock() > deadline:
             log("send_deadline_reached")
             break
-        if sent or failed:
-            sleep(settings.send_interval)
-
         is_update = rec is not None
-        extra = ""
-        if ev.enrich and not is_update:
-            try:
-                extra = ev.enrich()
-            except Exception as e:
-                log("enrich_failed", event_id=ev.id, error=repr(e))
-        text = ev.render(update=is_update, extra=extra)
-        kwargs = {"silent": is_silent(ev.severity, now, settings)}
-        if is_update and rec.get("msg"):
-            kwargs["reply_to"] = int(rec["msg"])
+        if is_update and not _update_due(ev, rec, now, settings):
+            out.throttled += 1
+            continue
 
-        outcome, msg_id = _deliver(notifier, text, kwargs, settings, deadline, sleep, clock)
-        if outcome == "ok":
-            store.put(ev.id, _record(ev, now, ttl, msg_id or (rec or {}).get("msg")))
-            sent.append((ev, text))
-            log("sent", event_id=ev.id, severity=ev.severity, update=is_update, silent=kwargs["silent"])
-        elif outcome == "drop":
-            # Telegram rifiuta il messaggio (400): non riprovare all'infinito.
-            store.put(ev.id, _record(ev, now, ttl))
-            dropped += 1
-        elif outcome == "stop":
-            break
+        # Un evento già pubblicato sul canale si aggiorna lì, in risposta al messaggio originale.
+        in_channel = not ev.topic or bool(is_update and rec.get("msg"))
+        private = {c for line in _event_lines(ev) for c in by_line.get(line, [])}
+        if ev.topic and not in_channel:
+            private |= set(by_topic.get(ev.topic, []))
+
+        if in_channel and out.channel >= settings.max_sends_per_run:
+            continue  # resta in sospeso: prossimo giro
+        if private and out.dm + len(private) > settings.max_dm_per_run and not in_channel:
+            continue
+
+        text = _text(ev, is_update)
+        silent = is_silent(ev.severity, now, settings)
+        msg_id = None
+        if in_channel:
+            if out.channel or out.failed:
+                sleep(settings.send_interval)
+            kwargs = {"silent": silent}
+            if is_update and rec.get("msg"):
+                kwargs["reply_to"] = int(rec["msg"])
+            outcome, msg_id = _deliver(notifier, text, kwargs, settings, deadline, sleep, clock)
+            if outcome == "drop":
+                # Telegram rifiuta il messaggio (400): non riprovare all'infinito.
+                store.put(ev.id, _record(ev, now, ttl, prev=rec, delivered=True))
+                out.dropped += 1
+                out.handled.add(ev.id)
+                continue
+            if outcome == "stop":
+                break
+            if outcome != "ok":
+                out.failed += 1  # non marcato: si riprova alla prossima esecuzione
+                continue
+            out.channel += 1
         else:
-            failed += 1  # non marcato: si riprova alla prossima esecuzione
-    return sent, dropped, failed
+            out.private_only += 1
+
+        out.dm += _send_private(notifier, private, text, silent, settings, out.dm)
+        store.put(ev.id, _record(ev, now, ttl, prev=rec, msg=msg_id, delivered=True))
+        out.handled.add(ev.id)
+        log("sent", event_id=ev.id, severity=ev.severity, update=is_update, silent=silent,
+            channel=in_channel, topic=ev.topic, private=len(private))
+    return out
+
+
+def _text(ev: Event, is_update: bool) -> str:
+    extra = ""
+    if ev.enrich and not is_update:
+        try:
+            extra = ev.enrich()
+        except Exception as e:
+            log("enrich_failed", event_id=ev.id, error=repr(e))
+    return ev.render(update=is_update, extra=extra)
+
+
+def _send_private(notifier, chats, text, silent, settings, already: int) -> int:
+    count = 0
+    for chat in sorted(chats):
+        if already + count >= settings.max_dm_per_run:
+            log("dm_cap_reached", sent=already + count)
+            break
+        try:
+            notifier.send(text, chat_id=chat, silent=silent)
+            count += 1
+        except Exception as e:
+            # 403: l'utente ha bloccato il bot; si continua con gli altri.
+            log("dm_failed", chat=chat, error=repr(e))
+    return count
 
 
 def _deliver(notifier, text, kwargs, settings, deadline, sleep, clock) -> tuple[str, int | None]:
@@ -200,34 +280,6 @@ def _deliver(notifier, text, kwargs, settings, deadline, sleep, clock) -> tuple[
             log("send_failed", error=repr(e))
             return "fail", None
     return "stop", None
-
-
-def _notify_subscribers(sent, store, notifier, settings, now, deadline, clock) -> int:
-    """Inoltra in privato gli avvisi GTT a chi segue le linee citate."""
-    by_event = [
-        (ev, text, set(ev.lines) or lines_in_text(f"{ev.title} {ev.body}"))
-        for ev, text in sent
-        if ev.source == gtt.SOURCE
-    ]
-    wanted = set().union(*(lines for _, _, lines in by_event)) if by_event else set()
-    if not wanted:
-        return 0
-    subs = subscriptions.subscribers(store, wanted)
-
-    count = 0
-    for ev, text, lines in by_event:
-        chats = {c for line in lines for c in subs.get(line, [])}
-        for chat in sorted(chats):
-            if count >= settings.max_dm_per_run or (deadline is not None and clock() > deadline):
-                log("dm_cap_reached", sent=count)
-                return count
-            try:
-                notifier.send(text, chat_id=chat, silent=is_silent(ev.severity, now, settings))
-                count += 1
-            except Exception as e:
-                # 403: l'utente ha bloccato il bot; si continua con gli altri.
-                log("dm_failed", chat=chat, error=repr(e))
-    return count
 
 
 def _admin(notifier, text: str) -> None:

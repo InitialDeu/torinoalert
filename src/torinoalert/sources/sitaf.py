@@ -23,6 +23,7 @@ def parse(html: str, label: str) -> list[Event]:
         events.append(Event(
             id="sitaf:" + sha(link["href"]),
             source=SOURCE,
+            topic="traffico",
             severity="LOW",
             title=f"{label}: {title}",
             body=f"Pubblicato il {published}. I dettagli di date e orari sono nel PDF.",

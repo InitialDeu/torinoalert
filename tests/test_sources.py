@@ -77,7 +77,9 @@ def test_gtt_alerts_lines_from_routes_and_text(fixture_bytes):
 def test_gtt_alerts_severity_and_periods(fixture_bytes):
     events = {e.title: e for e in gtt.parse_alerts(fixture_bytes("gtt_alerts.pb"), now=GTT_NOW)}
     # La descrizione dice "riprende regolare percorso", ma resta una deviazione.
-    assert events["Linea 17 deviata in entrambe le direzioni"].severity == "MED"
+    # Deviazione urbana: sul canale ma silenziosa (sono decine al giorno).
+    assert events["Linea 17 deviata in entrambe le direzioni"].severity == "LOW"
+    assert events["Linea 17 deviata in entrambe le direzioni"].topic == ""
     assert "Quando: dal mer 07/10 10:11 al dom 11/10 21:59" in events["Linea 17 deviata in entrambe le direzioni"].body
     elevator = next(e for t, e in events.items() if "ascensori" in t)
     assert elevator.title.startswith("🛗") and elevator.severity == "LOW" and elevator.lines == ("METRO",)
@@ -154,3 +156,28 @@ def test_comune_smog_skips_past_dates(fixture_text):
         "Limitazioni antismog del 3 ottobre",
     )
     assert comune.parse_smog(html_past, today=date(2026, 10, 5)) == []
+
+
+def test_gtt_alerts_topics(fixture_bytes):
+    events = gtt.parse_alerts(fixture_bytes("gtt_alerts.pb"), now=GTT_NOW)
+    extra = [e for e in events if e.topic == "extraurbane"]
+    assert extra and all(all(x.isdigit() and len(x) == 4 for x in e.lines) for e in extra)
+    assert any("1432" in e.lines for e in extra)
+    urban = [e for e in events if not e.topic]
+    assert any("17" in e.lines for e in urban) and any("METRO" in e.lines for e in urban)
+
+
+def test_gtt_topic_rules():
+    from torinoalert.gtfsrt import Alert
+
+    assert gtt._topic(Alert(id="1", routes=["2027E"]), "Linea 2027 deviata", {"2027"}) == "extraurbane"
+    assert gtt._topic(Alert(id="2", routes=["17U"]), "Linea 17 deviata", {"17"}) == ""
+    assert gtt._topic(Alert(id="3", stops=["13135"]), "Fermata n. 13135 sospesa", set()) == "fermate"
+    assert gtt._topic(Alert(id="4"), "Linee 2014, 2016 deviate", {"2014", "2016"}) == "extraurbane"
+
+
+def test_rfi_topics(fixture_text):
+    xml = fixture_text("rfi.xml")
+    suspended = rfi.parse(xml.replace("tornata regolare", "sospesa").encode())[0]
+    restored = rfi.parse(xml.encode())[0]
+    assert suspended.topic == "" and restored.topic == "treni"

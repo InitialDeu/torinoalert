@@ -56,6 +56,7 @@ def parse(html: str, today: date | None = None) -> list[Event]:
         events.append(Event(
             id="cm-to:" + sha("|".join(norm_key(c.get_text(" ", strip=True)) for c in (published, road, town, km))),
             source=SOURCE,
+            topic="provinciali",
             severity=severity,
             title=f"{kind} — {road_t}, {town_t}",
             body="\n".join(x for x in (

@@ -100,7 +100,7 @@ def _periods_text(periods: list[tuple[int, int]], now: float) -> str:
     return ("Quando: " + "; ".join(parts)) if parts else ""
 
 
-def _alert_severity(alert: gtfsrt.Alert, title: str) -> str:
+def _alert_severity(alert: gtfsrt.Alert, title: str, lines: set[str]) -> str:
     # Solo titolo ed effetto: le descrizioni delle deviazioni contengono sempre
     # "riprende regolare percorso" o "fermata sospesa".
     t = title.lower()
@@ -110,7 +110,20 @@ def _alert_severity(alert: gtfsrt.Alert, title: str) -> str:
         return "INFO"
     if alert.effect == 1 or any(x in t for x in ("sospes", "interrott", "interruz", "sciopero")):
         return "HIGH"
-    return "MED"
+    if "METRO" in lines:
+        return "MED"
+    # Deviazioni e modifiche di percorso: sul canale, ma senza suono (sono decine al giorno).
+    return "LOW"
+
+
+def _topic(alert: gtfsrt.Alert, title: str, lines: set[str]) -> str:
+    """Canale per urbane e metro; extraurbane e singole fermate solo a chi le segue."""
+    kinds = {r.strip().upper()[-1:] for r in alert.routes if r.strip()}
+    if kinds == {"E"} or (not kinds and lines and all(x.isdigit() and len(x) == 4 for x in lines)):
+        return "extraurbane"  # le linee extraurbane GTT hanno codici a 4 cifre (1432, 2027, ...)
+    if not lines and title.lower().startswith("fermata"):
+        return "fermate"
+    return ""
 
 
 def parse_alerts(data: bytes, now: float | None = None) -> list[Event]:
@@ -137,7 +150,8 @@ def parse_alerts(data: bytes, now: float | None = None) -> list[Event]:
         events.append(Event(
             id=f"gtt-rt:{alert.id}",
             source=SOURCE,
-            severity=_alert_severity(alert, title),
+            severity=_alert_severity(alert, title, lines),
+            topic=_topic(alert, title, lines),
             title=("🛗 " + title) if elevator else title_with_line(title),
             body=body,
             link=alert.url or LINK,

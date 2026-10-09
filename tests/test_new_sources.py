@@ -277,3 +277,19 @@ def test_5t_routes_roads_to_one_source():
     now = datetime(2026, 10, 8, 12, 0, tzinfo=ROME)
     ids = [e.id for e in muoversi.parse_traffic(props, radius_km=15, now=now)]
     assert ids == ["5t:3", "5t:4"]
+
+
+def test_topics_of_detail_sources(fixture_text):
+    assert all(e.topic == "provinciali" for e in cittametro.parse(fixture_text("cm_viabilita.html"), today=TODAY))
+    assert all(e.topic == "traffico" for e in sitaf.parse(fixture_text("sit_t4.html"), "Traforo del Frejus"))
+    assert all(e.topic == "" for e in mato.parse_viabilita(fixture_text("mato_viabilita.html"), today=TODAY))
+    events = muoversi.parse(fixture_text("5t_home.html"), radius_km=15, now=datetime(2026, 10, 6, 12, tzinfo=ROME))
+    assert {e.topic for e in events} == {"traffico", "extraurbane"}
+
+
+def test_aeroporto_topics():
+    html = """<div><h2>Aeroporto in real-time</h2><div id="partenze"><table>
+      <tr><td>08:00</td><td>ROMA</td><td>AZ1</td><td>cancellato</td></tr>
+      <tr><td>09:00</td><td>PARIS</td><td>AF2</td><td>partenza prevista alle ore 10:30</td></tr></table></div></div>"""
+    by_flight = {e.id.split(":")[2]: e for e in mato.parse_aeroporto(html, now=datetime(2026, 10, 8, 7, tzinfo=ROME))}
+    assert by_flight["AZ1"].topic == "" and by_flight["AF2"].topic == "aeroporto"

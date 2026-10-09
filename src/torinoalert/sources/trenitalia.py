@@ -31,10 +31,12 @@ def _realtime(item) -> Event | None:
     text = f"{title} {body}".lower()
     if not mentions(text, TORINO_KEYWORDS):
         return None
+    severity = _severity(text)
     return Event(
         id="trenitalia-rt:" + sha(norm_key(title)),
         source=SOURCE,
-        severity=_severity(text),
+        severity=severity,
+        topic="" if severity == "HIGH" else "treni",  # sul canale solo sospensioni e interruzioni
         title=title,
         body=body,
         link=URL,
@@ -59,6 +61,7 @@ def _infolavori(item, today: date) -> list[Event]:
                 source=SOURCE,
                 severity="MED" if any(k in text.lower() for k in ("bus", "cancellazion", "sospes")) else "LOW",
                 title=f"Lavori — {heading}",
+                topic="treni",
                 body=text,
                 link=link,
                 digest_line=f"{heading}: {text[:120]}" if on_today else "",

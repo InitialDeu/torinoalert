@@ -14,6 +14,8 @@ class Settings:
     max_sends_per_run: int = 10
     # Tetto di messaggi privati agli iscritti per esecuzione.
     max_dm_per_run: int = 30
+    # Aggiornamenti dello stesso avviso senza cambio di gravità: al massimo uno ogni N minuti.
+    update_min_interval_minutes: int = 60
     send_interval: float = 1.0
     max_retry_wait: float = 10.0
     http_timeout: float = 8.0
@@ -49,6 +51,7 @@ class Settings:
             dedup_ttl_days=get("DEDUP_TTL_DAYS", int, d.dedup_ttl_days),
             max_sends_per_run=get("MAX_SENDS_PER_RUN", int, d.max_sends_per_run),
             max_dm_per_run=get("MAX_DM_PER_RUN", int, d.max_dm_per_run),
+            update_min_interval_minutes=get("UPDATE_MIN_INTERVAL_MINUTES", int, d.update_min_interval_minutes),
             send_interval=get("SEND_INTERVAL", float, d.send_interval),
             max_retry_wait=get("MAX_RETRY_WAIT", float, d.max_retry_wait),
             http_timeout=get("HTTP_TIMEOUT", float, d.http_timeout),

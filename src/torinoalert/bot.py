@@ -8,11 +8,13 @@ from .text import normalize_line
 
 HELP = (
     "🚦 TorinoAlert — avvisi su trasporti, traffico, meteo e servizi a Torino.\n\n"
-    "Il canale riceve tutti gli avvisi. Qui puoi seguire le tue linee GTT e ricevere "
-    "in privato solo quelle:\n\n"
-    "/linea 4 — segui la linea 4 (anche /linea metro, /linea SE2)\n"
+    "Il canale riceve ciò che riguarda tutta la città. Qui, in privato, puoi aggiungere "
+    "le tue linee GTT e gli argomenti di dettaglio:\n\n"
+    "/linea 4 — segui la linea 4 (anche /linea metro, /linea SE2, /linea 1432)\n"
     "/stop 4 — smetti di seguirla (/stop da solo: tutte)\n"
-    "/linee — le linee che segui\n"
+    "/segui treni — segui un argomento (/argomenti per l'elenco)\n"
+    "/nonseguire treni — smetti di seguirlo (da solo: tutti)\n"
+    "/linee — linee e argomenti che segui\n"
     "/oggi — riepilogo dei disservizi attivi adesso\n"
     "/id — il tuo chat ID (per configurare gli avvisi tecnici)\n"
     "/help — questo messaggio"
@@ -28,6 +30,15 @@ def _fmt(lines: list[str]) -> str:
     return ", ".join("metro" if x == "METRO" else x for x in lines) if lines else "nessuna"
 
 
+def _fmt_topics(topics: list[str]) -> str:
+    return ", ".join(topics) if topics else "nessuno"
+
+
+def topics_text(followed: list[str]) -> str:
+    rows = [f"{'✅' if t in followed else '▫️'} {t} — {desc}" for t, desc in subscriptions.TOPICS.items()]
+    return "Argomenti (/segui <nome>):\n\n" + "\n".join(rows)
+
+
 def reply_for(text: str, chat_id, store, today: Callable[[], str]) -> str:
     cmd, _, arg = (text or "").strip().partition(" ")
     cmd = cmd.lstrip("/").split("@")[0].lower()
@@ -40,7 +51,24 @@ def reply_for(text: str, chat_id, store, today: Callable[[], str]) -> str:
     if cmd == "oggi":
         return today()
     if cmd == "linee":
-        return f"Linee che segui: {_fmt(subscriptions.lines_of(store, chat_id))}"
+        lines = subscriptions.lines_of(store, chat_id)
+        topics = subscriptions.topics_of(store, chat_id)
+        return f"Linee che segui: {_fmt(lines)}\nArgomenti che segui: {_fmt_topics(topics)}"
+    if cmd == "argomenti":
+        return topics_text(subscriptions.topics_of(store, chat_id))
+    if cmd == "segui":
+        topic = arg.lower()
+        if topic not in subscriptions.TOPICS:
+            prefix = "Argomento non valido.\n\n" if topic else ""
+            return prefix + topics_text(subscriptions.topics_of(store, chat_id))
+        topics = subscriptions.follow(store, chat_id, topic)
+        return f"✅ Ora segui «{topic}».\nArgomenti che segui: {_fmt_topics(topics)}"
+    if cmd == "nonseguire":
+        topic = arg.lower() or None
+        if topic and topic not in subscriptions.TOPICS:
+            return "Argomento non valido.\n\n" + topics_text(subscriptions.topics_of(store, chat_id))
+        topics = subscriptions.unfollow(store, chat_id, topic)
+        return f"🛑 Fatto. Argomenti che segui: {_fmt_topics(topics)}"
     if cmd == "linea":
         line = normalize_line(arg)
         if not line:

@@ -105,7 +105,7 @@ def test_fingerprint_change_replies_to_original_message():
     store, tg = bootstrapped("S"), FakeNotifier()
     do_run({"S": lambda: [ev("r", fingerprint="v1")]}, store, tg)
     do_run({"S": lambda: [ev("r", fingerprint="v1")]}, store, tg)
-    do_run({"S": lambda: [ev("r", fingerprint="v2")]}, store, tg)
+    do_run({"S": lambda: [ev("r", fingerprint="v2")]}, store, tg, now=NOW + 2 * 3600)
     assert len(tg.sent) == 2
     assert "AGGIORNAMENTO" in tg.sent[1]
     assert tg.calls[1]["reply_to"] == 1001  # risponde al primo messaggio
@@ -264,3 +264,52 @@ def test_one_slow_source_does_not_block_others():
     )
     assert r["sent"] == 1
     assert "error" in r["per_source"]["SLOW"]
+
+
+# ---------- argomenti e frequenza degli aggiornamenti ----------
+
+def test_topic_events_go_only_to_followers():
+    store, tg = bootstrapped("S"), FakeNotifier()
+    subscriptions.follow(store, 555, "treni")
+    r = do_run({"S": lambda: [ev("t", topic="treni"), ev("p", topic="provinciali"), ev("c")]}, store, tg)
+    assert [c["chat_id"] for c in tg.calls if "titolo t" in c["text"]] == ["555"]
+    assert not any("titolo p" in c["text"] for c in tg.calls)  # nessuno lo segue
+    assert [c["chat_id"] for c in tg.calls if "titolo c" in c["text"]] == [None]  # canale
+    assert r["sent"] == 1 and r["private_only"] == 2 and r["dm"] == 1
+    assert "p" in store.data  # registrato comunque: non si riprova a ogni giro
+
+
+def test_line_follower_gets_extraurban_alert_once():
+    store, tg = bootstrapped("GTT"), FakeNotifier()
+    subscriptions.subscribe(store, 777, "1432")
+    subscriptions.follow(store, 777, "extraurbane")
+    do_run({"GTT": lambda: [ev("x", source=gtt.SOURCE, title="Linea 1432 deviata", lines=("1432",),
+                                topic="extraurbane")]}, store, tg)
+    assert [c["chat_id"] for c in tg.calls] == ["777"]
+
+
+def test_updates_are_throttled_unless_severity_changes():
+    store, tg = bootstrapped("S"), FakeNotifier()
+    do_run({"S": lambda: [ev("u", fingerprint="1")]}, store, tg, now=NOW)
+    do_run({"S": lambda: [ev("u", fingerprint="2")]}, store, tg, now=NOW + 600)    # 10 minuti: no
+    do_run({"S": lambda: [ev("u", fingerprint="3")]}, store, tg, now=NOW + 1200)   # 20 minuti: no
+    assert len(tg.sent) == 1
+    do_run({"S": lambda: [ev("u", "HIGH", fingerprint="4")]}, store, tg, now=NOW + 1300)  # gravità: sì
+    do_run({"S": lambda: [ev("u", "HIGH", fingerprint="5")]}, store, tg, now=NOW + 5000)  # >1 ora: sì
+    assert len(tg.sent) == 3 and "AGGIORNAMENTO" in tg.sent[-1]
+
+
+def test_update_of_channel_message_stays_in_channel_even_with_topic():
+    store, tg = bootstrapped("S"), FakeNotifier()
+    do_run({"S": lambda: [ev("rfi", "HIGH", fingerprint="sospesa")]}, store, tg)
+    do_run({"S": lambda: [ev("rfi", "INFO", fingerprint="regolare", topic="treni")]}, store, tg, now=NOW + 60)
+    assert [c["chat_id"] for c in tg.calls] == [None, None]
+    assert tg.calls[1]["reply_to"] == 1001
+
+
+def test_render_header_and_hashtags():
+    text = Event(id="g", source=gtt.SOURCE, severity="HIGH", title="Linea 4 sospesa", lines=("4", "METRO")).render()
+    first, last = text.split("\n")[0], text.split("\n")[-1]
+    assert first == "🚌 TRASPORTO PUBBLICO (GTT) · 🟠 IMPORTANTE"
+    assert last == "#GTT #linea4 #metro"
+    assert Event(id="x", source="FIUMI", severity="MED", title="t").render().startswith("🌊 FIUMI\n")

@@ -6,7 +6,10 @@ COMMANDS = [
     ("oggi", "Riepilogo dei disservizi attivi adesso"),
     ("linea", "Segui una linea GTT, es. /linea 4 o /linea metro"),
     ("stop", "Smetti di seguire una linea, es. /stop 4 (senza numero: tutte)"),
-    ("linee", "Le linee che segui"),
+    ("segui", "Segui un argomento: treni, traffico, aeroporto, ..."),
+    ("nonseguire", "Smetti di seguire un argomento"),
+    ("argomenti", "Elenco degli argomenti"),
+    ("linee", "Linee e argomenti che segui"),
     ("id", "Il tuo chat ID"),
     ("help", "Come funziona il bot"),
 ]

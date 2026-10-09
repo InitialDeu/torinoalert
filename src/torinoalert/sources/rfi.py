@@ -54,10 +54,12 @@ def parse(xml_bytes: bytes, now: float | None = None) -> list[Event]:
         guid = entry.get("id") or link or norm_key(title)
         published = entry.get("published_parsed")
         recent = published is not None and now - calendar.timegm(published) < 86400
+        severity = classify(text)
         events.append(Event(
             id="rfi:" + sha(guid),
             source=SOURCE,
-            severity=classify(text),
+            severity=severity,
+            topic="" if severity == "HIGH" else "treni",  # i rientri seguono il messaggio sul canale
             title=title,
             body=summary,
             link=link,

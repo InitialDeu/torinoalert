@@ -3,10 +3,38 @@ from dataclasses import dataclass, field
 
 from .text import normalize_body
 
-SEVERITY_EMOJI = {"CRIT": "🔴", "HIGH": "🟠", "MED": "🟡", "LOW": "🟢", "INFO": "ℹ️"}
 SEVERITY_RANK = {"CRIT": 0, "HIGH": 1, "MED": 2, "LOW": 3, "INFO": 4}
+# Urgenza scritta, non solo un pallino: si capisce anche nell'anteprima della notifica.
+SEVERITY_MARKER = {"CRIT": "🔴 URGENTE", "HIGH": "🟠 IMPORTANTE", "INFO": "ℹ️ INFO"}
+
+# Icona e hashtag per categoria: messaggi di fonti diverse si distinguono a colpo d'occhio
+# e si possono filtrare con la ricerca di Telegram.
+SOURCE_STYLE = {
+    "TRASPORTO PUBBLICO (GTT)": ("🚌", "GTT"),
+    "TRASPORTO PUBBLICO REGIONALE": ("🚌", "trasporti"),
+    "TRENI (TRENITALIA)": ("🚆", "treni"),
+    "FERROVIE (RFI)": ("🚆", "treni"),
+    "TRAFFICO": ("🚗", "traffico"),
+    "AUTOSTRADA A32 / FREJUS": ("🛣️", "A32"),
+    "STRADE PROVINCIALI": ("🛣️", "provinciali"),
+    "VIABILITÀ TORINO": ("🚧", "viabilita"),
+    "VIABILITÀ / CANTIERI": ("🚧", "viabilita"),
+    "ALLERTA METEO": ("⛈️", "allerta"),
+    "FIUMI": ("🌊", "fiumi"),
+    "TERREMOTO": ("🌍", "terremoto"),
+    "SCIOPERI": ("✊", "sciopero"),
+    "AEROPORTO CASELLE": ("✈️", "aeroporto"),
+    "ACQUA (SMAT)": ("💧", "acqua"),
+    "SEMAFORO ANTISMOG": ("🌫️", "smog"),
+    "LIMITAZIONI / SMOG": ("🌫️", "smog"),
+    "BOLLETTINO CALORE": ("🌡️", "caldo"),
+}
 
 TELEGRAM_MAX_LEN = 3800  # limite Telegram 4096, con margine
+
+
+def _hashtag(text: str) -> str:
+    return "#" + "".join(ch for ch in text if ch.isalnum() or ch == "_")
 
 
 @dataclass(frozen=True)
@@ -26,12 +54,21 @@ class Event:
     digest_line: str = ""
     # Linee GTT coinvolte quando la fonte le dichiara (GTFS); altrimenti dedotte dal testo.
     lines: tuple[str, ...] = ()
+    # Argomento opzionale: vuoto = canale; altrimenti solo a chi lo segue (/segui <argomento>).
+    topic: str = ""
     # Testo aggiuntivo scaricato solo al momento dell'invio (es. corpo di un articolo).
     enrich: Callable[[], str] | None = field(default=None, compare=False, repr=False)
 
+    def hashtags(self) -> str:
+        tags = [SOURCE_STYLE.get(self.source, ("", ""))[1]]
+        tags += ["metro" if line == "METRO" else f"linea{line}" for line in self.lines]
+        return " ".join(_hashtag(t) for t in tags if t)
+
     def render(self, update: bool = False, extra: str = "") -> str:
-        emoji = SEVERITY_EMOJI.get(self.severity, "ℹ️")
-        header = f"{emoji} {self.source} — TORINO"
+        icon = SOURCE_STYLE.get(self.source, ("📢", ""))[0]
+        header = f"{icon} {self.source}"
+        if self.severity in SEVERITY_MARKER:
+            header += f" · {SEVERITY_MARKER[self.severity]}"
         if update:
             header += " · 🔄 AGGIORNAMENTO"
 
@@ -41,8 +78,10 @@ class Event:
             parts.append(body)
         if self.link:
             parts.append(f"👉 {self.link}")
+        tags = self.hashtags()
 
         msg = "\n\n".join(parts)
-        if len(msg) > TELEGRAM_MAX_LEN:
-            msg = msg[:TELEGRAM_MAX_LEN].rstrip() + "…"
-        return msg
+        limit = TELEGRAM_MAX_LEN - len(tags) - 2
+        if len(msg) > limit:
+            msg = msg[:limit].rstrip() + "…"
+        return f"{msg}\n\n{tags}" if tags else msg

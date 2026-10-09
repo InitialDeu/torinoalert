@@ -71,6 +71,7 @@ def parse_traffic(props: dict, radius_km: float, now: datetime | None = None) ->
         events.append(Event(
             id=f"5t:{e.get('id')}",
             source=SOURCE_TRAFFIC,
+            topic="traffico",
             severity="MED" if closure else "LOW",
             title=f"{'⛔ ' if closure else '🚧 '}{road}: {what}",
             body="\n".join(x for x in (e.get("where"), e.get("when")) if x),
@@ -94,6 +95,7 @@ def parse_tpl_news(props: dict) -> list[Event]:
         events.append(Event(
             id="5t-tpl:" + sha(url or title),
             source=SOURCE_TPL,
+            topic="extraurbane",
             severity="LOW",
             title=title,
             body=desc + (f"\n({tags})" if tags else ""),
