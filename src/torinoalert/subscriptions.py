@@ -8,6 +8,7 @@ MAX_LINES_PER_CHAT = 20
 
 # Argomenti che non vanno sul canale ma solo a chi li segue con /segui.
 TOPICS = {
+    "programmate": "deviazioni GTT urbane programmate, una per una (sul canale c'è il riepilogo del lunedì)",
     "extraurbane": "linee GTT extraurbane e trasporto pubblico regionale",
     "fermate": "singole fermate GTT sospese o spostate",
     "treni": "lavori e disservizi minori sui treni (le sospensioni gravi sono già sul canale)",

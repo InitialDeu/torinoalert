@@ -133,3 +133,42 @@ def test_lines_and_topics_do_not_overwrite_each_other():
     reply(store, "/segui treni")
     reply(store, "/stop 4")
     assert subscriptions.topics_of(store, 42) == ["treni"]
+
+
+# ---------- riepilogo settimanale ----------
+
+MONDAY = datetime(2026, 10, 12, 7, 5, tzinfo=ROME)
+
+
+def planned(title, days=(), published=0):
+    return Event(id=title, source="TRASPORTO PUBBLICO (GTT)", severity="LOW", title=title, topic="programmate",
+                 planned=True, days=days, published=published)
+
+
+def test_weekly_groups_by_day_and_skips_other_weeks():
+    from torinoalert.digest import build_weekly
+
+    events = [
+        planned("Linea 9 deviata", ("2026-10-18",)),
+        planned("Linea 17 deviata", ("2026-10-13", "2026-10-14")),
+        planned("Linea 4 deviata", ("2026-11-02",)),                                   # fra tre settimane
+        planned("Linea 38 deviata", (), published=int(MONDAY.timestamp()) - 86400),    # nuova, senza date
+        planned("Linea 94 deviata", (), published=int(MONDAY.timestamp()) - 30 * 86400),  # vecchia
+        Event(id="x", source="TRASPORTO PUBBLICO (GTT)", severity="MED", title="Linea 15 bloccata"),
+    ]
+    text = build_weekly(events, MONDAY)
+    assert text.startswith("📅 GTT — deviazioni programmate da lun 12/10 a dom 18/10")
+    assert text.index("▪️ mar 13/10") < text.index("Linea 17") < text.index("▪️ dom 18/10") < text.index("Linea 9")
+    assert "Linea 38" in text and "fino a nuova comunicazione" in text
+    assert "Linea 4 " not in text and "Linea 94" not in text and "Linea 15" not in text
+    assert build_weekly([], MONDAY) is None
+
+
+def test_weekly_sent_only_on_monday():
+    store, tg = MemoryStore(), Notifier()
+    sources = {"GTT": lambda: [planned("Linea 9 deviata", ("2026-10-13",))]}
+    assert run_digest(sources, store, tg, Settings(), lambda: "", now=MONDAY)["weekly"] is True
+    assert len(tg.sent) == 2 and tg.sent[1].startswith("📅 GTT")
+    tuesday_store, tuesday_tg = MemoryStore(), Notifier()
+    assert run_digest(sources, tuesday_store, tuesday_tg, Settings(), lambda: "",
+                      now=MONDAY.replace(day=13))["weekly"] is False

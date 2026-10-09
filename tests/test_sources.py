@@ -77,10 +77,11 @@ def test_gtt_alerts_lines_from_routes_and_text(fixture_bytes):
 def test_gtt_alerts_severity_and_periods(fixture_bytes):
     events = {e.title: e for e in gtt.parse_alerts(fixture_bytes("gtt_alerts.pb"), now=GTT_NOW)}
     # La descrizione dice "riprende regolare percorso", ma resta una deviazione.
-    # Deviazione urbana: sul canale ma silenziosa (sono decine al giorno).
+    # Deviazione programmata: silenziosa e fuori dal canale (va nel riepilogo del lunedì).
     assert events["Linea 17 deviata in entrambe le direzioni"].severity == "LOW"
-    assert events["Linea 17 deviata in entrambe le direzioni"].topic == ""
-    assert "Quando: dal mer 07/10 10:11 al dom 11/10 21:59" in events["Linea 17 deviata in entrambe le direzioni"].body
+    assert events["Linea 17 deviata in entrambe le direzioni"].topic == "programmate"  # Strarivoli, annunciata
+    line17 = events["Linea 17 deviata in entrambe le direzioni"]
+    assert "Avviso valido dal mer 07/10 10:11 al dom 11/10 21:59" in line17.body
     elevator = next(e for t, e in events.items() if "ascensori" in t)
     assert elevator.title.startswith("🛗") and elevator.severity == "LOW" and elevator.lines == ("METRO",)
     assert "fino a nuova comunicazione" in elevator.body and not elevator.digest_line
@@ -163,7 +164,7 @@ def test_gtt_alerts_topics(fixture_bytes):
     extra = [e for e in events if e.topic == "extraurbane"]
     assert extra and all(all(x.isdigit() and len(x) == 4 for x in e.lines) for e in extra)
     assert any("1432" in e.lines for e in extra)
-    urban = [e for e in events if not e.topic]
+    urban = [e for e in events if e.topic != "extraurbane"]
     assert any("17" in e.lines for e in urban) and any("METRO" in e.lines for e in urban)
 
 
@@ -181,3 +182,48 @@ def test_rfi_topics(fixture_text):
     suspended = rfi.parse(xml.replace("tornata regolare", "sospesa").encode())[0]
     restored = rfi.parse(xml.encode())[0]
     assert suspended.topic == "" and restored.topic == "treni"
+
+
+def test_gtt_unplanned_goes_to_channel_with_sound(fixture_bytes):
+    events = {e.title: e for e in gtt.parse_alerts(fixture_bytes("gtt_alerts.pb"), now=GTT_NOW)}
+    # "Causa manifestazione in zona Vanchiglia. Seguiranno aggiornamenti": imprevisto.
+    vanchiglia = next(e for t, e in events.items() if t.startswith("linee 6,19"))
+    assert not vanchiglia.planned and vanchiglia.topic == "" and vanchiglia.severity == "MED"
+    # Luci d'artista (posa luminarie): programmata, nessun messaggio sul canale.
+    luci = events["Linee 13 e 15 deviate in entrambe le direzioni."]
+    assert luci.planned and luci.topic == "programmate" and luci.severity == "LOW"
+    assert luci.days == ("2026-10-08",)  # "8 ottobre2026", con l'anno attaccato
+
+
+def _alert(header, description="", cause=2, periods=((1791396000, 1791396000 + 3 * 3600),), routes=("4U",)):
+    from torinoalert.gtfsrt import Alert
+
+    return Alert(id=header, header=header, description=description, cause=cause, periods=list(periods),
+                 routes=list(routes))
+
+
+def _one(alert):
+    from torinoalert import gtfsrt
+
+    original = gtfsrt.parse_alerts
+    gtfsrt.parse_alerts = lambda data: [alert]
+    try:
+        return gtt.parse_alerts(b"", now=GTT_NOW)[0]
+    finally:
+        gtfsrt.parse_alerts = original
+
+
+def test_gtt_planned_vs_unplanned_rules():
+    blocked = _one(_alert("Linea 4 deviata", "Causa veicolo in sosta che ostruisce la sede tranviaria."))
+    assert not blocked.planned and blocked.topic == "" and blocked.severity == "MED"
+    crash = _one(_alert("Linea 4 temporaneamente sospesa", "Causa incidente in corso Giulio Cesare."))
+    assert crash.severity == "HIGH" and crash.topic == ""
+    works = _one(_alert("Linea 50 deviata", "Dalle ore 18 e sino a nuove comunicazioni.", cause=6,
+                        periods=((1791396000, 1791396000 + 200 * 86400),)))
+    assert works.planned and works.topic == "programmate"  # causa "incidente" ma testo da lavori
+    sunday = _one(_alert("Linea 9 deviata", "Domenica 11 ottobre 2026 dalle ore 6 alle 23."))
+    assert sunday.planned and sunday.days == ("2026-10-11",)
+    vague = _one(_alert("Linea 15 deviata", "Percorso alternativo."))  # breve, senza date
+    assert not vague.planned
+    metro_works = _one(_alert("Metro chiusa per lavori", "Domenica 11 ottobre 2026.", routes=("METROU",)))
+    assert metro_works.planned and metro_works.topic == ""  # la metro resta sul canale

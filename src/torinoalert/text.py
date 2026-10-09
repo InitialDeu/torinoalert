@@ -100,7 +100,8 @@ MONTHS = {
     "luglio": 7, "agosto": 8, "settembre": 9, "ottobre": 10, "novembre": 11, "dicembre": 12,
 }
 _DATE_RE = re.compile(
-    r"\b(\d{1,2})(?:°|º)?\s+(" + "|".join(MONTHS) + r")(?:\s+(\d{4}))?\b",
+    # "8 ottobre 2026" ma anche "8 ottobre2026", come scrive a volte GTT.
+    r"\b(\d{1,2})(?:°|º)?\s+(" + "|".join(MONTHS) + r")(?:\s*(\d{4}))?\b",
     re.IGNORECASE,
 )
 
@@ -117,15 +118,23 @@ def _closest_year(day: int, month: int, today: date) -> int:
     return min(candidates, key=lambda d: abs((d - today).days)).year
 
 
+# "13 a sabato 24 ottobre", "5 e martedì 6 ottobre": il primo giorno prende il mese del secondo.
+_SHARED_MONTH_RE = re.compile(
+    r"\b(\d{1,2})(?:°|º)?(\s+(?:a|al|e|ed|-|–)\s+(?:[a-zà-ù']+\s+)?\d{1,2}(?:°|º)?\s+(" + "|".join(MONTHS) + r"))",
+    re.IGNORECASE,
+)
+
+
 def dates_in_text(text: str, today: date) -> list[date]:
     """
     Date "giorno mese [anno]" nell'ordine in cui compaiono.
     Senza anno: la prima data prende l'anno più vicino a oggi, le successive
     avanzano di un anno se tornano indietro ("dal 15 settembre al 15 aprile").
     """
+    text = _SHARED_MONTH_RE.sub(lambda m: f"{m.group(1)} {m.group(3)}{m.group(2)}", text or "")
     found: list[date] = []
     prev = None
-    for m in _DATE_RE.finditer(text or ""):
+    for m in _DATE_RE.finditer(text):
         day, month = int(m.group(1)), MONTHS[m.group(2).lower()]
         if m.group(3):
             year = int(m.group(3))

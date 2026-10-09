@@ -1,6 +1,6 @@
 """Riepilogo dei disservizi attivi: ogni mattina sul canale e su richiesta con /oggi."""
 from collections.abc import Callable
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from .config import Settings
 from .events import Event
@@ -52,8 +52,48 @@ def build(events: list[Event], weather: str, now: datetime, failed: list[str] | 
     return text if len(text) <= 3800 else text[:3800].rsplit("\n", 1)[0] + "\n…"
 
 
-def collect_digest(sources, settings: Settings, weather_fn: Callable[[], str], now: datetime | None = None) -> str:
-    now = now or datetime.now(ROME)
+def _day_label(d: date) -> str:
+    return f"{_WEEKDAYS[d.weekday()][:3]} {d:%d/%m}"
+
+
+def build_weekly(events: list[Event], now: datetime, max_len: int = 3800) -> str | None:
+    """
+    Deviazioni GTT urbane programmate della settimana, raggruppate per giorno: sostituiscono
+    i singoli messaggi sul canale. Quelle senza date ("sino a nuove comunicazioni")
+    compaiono la settimana in cui sono state pubblicate.
+    """
+    today = now.astimezone(ROME).date()
+    week = {today + timedelta(days=i) for i in range(7)}
+    since = now.timestamp() - 7 * 86400
+
+    by_day: dict[date, list[str]] = {}
+    ongoing: list[str] = []
+    for ev in events:
+        if not ev.planned or ev.topic != "programmate":
+            continue
+        days = sorted(d for d in (date.fromisoformat(x) for x in ev.days) if d in week)
+        if days:
+            by_day.setdefault(days[0], []).append(ev.title)
+        elif not ev.days and ev.published >= since:
+            ongoing.append(ev.title)
+    if not by_day and not ongoing:
+        return None
+
+    parts = [f"📅 GTT — deviazioni programmate da {_day_label(today)} a {_day_label(today + timedelta(days=6))}"]
+    for day in sorted(by_day):
+        parts.append(f"▪️ {_day_label(day)}\n" + "\n".join(f"• {t}" for t in sorted(set(by_day[day]))))
+    if ongoing:
+        bullets = "\n".join(f"• {t}" for t in sorted(set(ongoing)))
+        parts.append("▪️ Da questa settimana, fino a nuova comunicazione\n" + bullets)
+    parts.append("Dettagli in privato: /linea <numero> oppure /segui programmate")
+
+    text = "\n\n".join(parts)
+    if len(text) > max_len:
+        text = text[:max_len].rsplit("\n", 1)[0] + "\n… elenco completo con /segui programmate"
+    return text
+
+
+def _collect(sources, settings: Settings, weather_fn: Callable[[], str]):
     results = collect_all(sources, settings.collect_timeout)
     events = [ev for r in results.values() if isinstance(r, list) for ev in r]
     failed = [name for name, r in results.items() if not isinstance(r, list)]
@@ -62,12 +102,21 @@ def collect_digest(sources, settings: Settings, weather_fn: Callable[[], str], n
     except Exception as e:
         log("weather_failed", error=repr(e))
         weather = ""
+    return events, weather, failed
+
+
+def collect_digest(sources, settings: Settings, weather_fn: Callable[[], str], now: datetime | None = None) -> str:
+    now = now or datetime.now(ROME)
+    events, weather, failed = _collect(sources, settings, weather_fn)
     return build(events, weather, now, failed)
 
 
 def run_digest(sources, store, notifier, settings: Settings, weather_fn, now: datetime | None = None,
                force: bool = False) -> dict:
-    """Invia il riepilogo sul canale una volta al giorno, all'ora configurata (ora di Roma)."""
+    """
+    Riepilogo sul canale una volta al giorno all'ora configurata (ora di Roma);
+    il lunedì anche il riepilogo settimanale delle deviazioni GTT programmate.
+    """
     now = (now or datetime.now(ROME)).astimezone(ROME)
     if not force and now.hour != settings.digest_hour:
         log("digest_skipped", reason="fuori orario", hour=now.hour)
@@ -77,8 +126,14 @@ def run_digest(sources, store, notifier, settings: Settings, weather_fn, now: da
         log("digest_skipped", reason="già inviato")
         return {"status": "skipped"}
 
-    text = collect_digest(sources, settings, weather_fn, now)
+    events, weather, failed = _collect(sources, settings, weather_fn)
+    text = build(events, weather, now, failed)
     notifier.send(text)
     store.put(key, {"sent_at": int(now.timestamp()), "expires_at": int(now.timestamp()) + 3 * 86400})
     log("digest_sent", chars=len(text))
-    return {"status": "sent", "chars": len(text)}
+
+    weekly = build_weekly(events, now) if now.weekday() == 0 else None
+    if weekly:
+        notifier.send(weekly, silent=True)
+        log("weekly_sent", chars=len(weekly))
+    return {"status": "sent", "chars": len(text), "weekly": bool(weekly)}

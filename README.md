@@ -39,13 +39,16 @@ The channel only carries what matters to the whole city; detail is opt-in, so no
 | On the channel | Only to who follows it (`/segui <topic>`) |
 |---|---|
 | Weather alerts, rivers, earthquakes, strikes | `extraurbane` — GTT extra-urban lines and regional public transport |
-| GTT urban lines and metro (detours are silent; suspensions and metro problems ring) | `fermate` — single GTT stops suspended or moved |
+| GTT **unexpected** disruptions (accidents, breakdowns, blocked trams, unannounced demonstrations), metro, lift status — these ring | `programmate` — GTT urban detours announced in advance, one by one |
+| **Weekly summary every Monday** of planned GTT detours, grouped by day (and in the 07:00 summary of the day itself) | `fermate` — single GTT stops suspended or moved |
 | Rail **suspensions/interruptions** | `treni` — rail works and minor disruptions |
 | Turin street closures, city news, anti-smog, water | `traffico` — motorways, ring road, state roads, A32/Fréjus closure programmes |
 | **Cancelled** flights | `provinciali` — provincial roads |
 | Morning summary | `aeroporto` — flight delays |
 
 If an event was published on the channel, its updates stay on the channel as replies even when they would otherwise be opt-in (e.g. a rail line back to normal after a suspension).
+
+**Planned or unexpected?** GTT's validity period starts when a notice is published, not when the disruption happens, so the classification reads the notice: explicit wording ("incidente", "guasto", "veicolo in sosta", "ostruisce", "malore", "seguiranno aggiornamenti"…) means unexpected; dates in the text ("domenica 11 ottobre", "da martedì 13 a sabato 24 ottobre"), works, "sino a nuove comunicazioni" or named events mean planned; GTT's declared cause is used only when the text gives no hint; a short notice with no dates at all is treated as unexpected.
 
 ### Telegram features
 

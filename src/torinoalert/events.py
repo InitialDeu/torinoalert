@@ -56,6 +56,11 @@ class Event:
     lines: tuple[str, ...] = ()
     # Argomento opzionale: vuoto = canale; altrimenti solo a chi lo segue (/segui <argomento>).
     topic: str = ""
+    # Disservizio programmato (annunciato in anticipo): finisce nel riepilogo settimanale.
+    planned: bool = False
+    # Giorni (ISO) citati nel testo, per i riepiloghi; e quando la fonte l'ha pubblicato (epoch).
+    days: tuple[str, ...] = ()
+    published: int = 0
     # Testo aggiuntivo scaricato solo al momento dell'invio (es. corpo di un articolo).
     enrich: Callable[[], str] | None = field(default=None, compare=False, repr=False)
 

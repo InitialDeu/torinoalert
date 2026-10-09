@@ -87,3 +87,11 @@ def test_lines_in_text(text, expected):
 def test_distance_km():
     assert distance_km(45.0703, 7.6869) < 0.01
     assert 25 < distance_km(45.055, 7.3627) < 27  # Giaveno
+
+
+def test_dates_share_month_in_ranges():
+    today = date(2026, 10, 9)
+    assert dates_in_text("Da Martedi' 13 a sabato 24 ottobre 2026", today) == [date(2026, 10, 13), date(2026, 10, 24)]
+    assert dates_in_text("lunedì 5 e martedì 6 ottobre", today) == [date(2026, 10, 5), date(2026, 10, 6)]
+    assert dates_in_text("giovedì 8 ottobre2026", today) == [date(2026, 10, 8)]
+    assert dates_in_text("Linee 13 e 15 deviate", today) == []
