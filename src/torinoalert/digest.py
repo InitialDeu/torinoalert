@@ -56,11 +56,15 @@ def _day_label(d: date) -> str:
     return f"{_WEEKDAYS[d.weekday()][:3]} {d:%d/%m}"
 
 
+WEEKLY_PIN_KEY = "__meta__:weekly_pin"
+TRAIN_SOURCE = "TRENI (TRENITALIA)"
+
+
 def build_weekly(events: list[Event], now: datetime, max_len: int = 3800) -> str | None:
     """
-    Deviazioni GTT urbane programmate della settimana, raggruppate per giorno: sostituiscono
-    i singoli messaggi sul canale. Quelle senza date ("sino a nuove comunicazioni")
-    compaiono la settimana in cui sono state pubblicate.
+    Unico messaggio del lunedì, fissato in alto: deviazioni GTT urbane programmate della
+    settimana raggruppate per giorno (quelle senza date compaiono la settimana in cui sono
+    pubblicate) e lavori sulle linee ferroviarie di Torino attivi in settimana.
     """
     today = now.astimezone(ROME).date()
     week = {today + timedelta(days=i) for i in range(7)}
@@ -68,29 +72,60 @@ def build_weekly(events: list[Event], now: datetime, max_len: int = 3800) -> str
 
     by_day: dict[date, list[str]] = {}
     ongoing: list[str] = []
+    trains: list[tuple[date, str]] = []
     for ev in events:
-        if not ev.planned or ev.topic != "programmate":
+        if not ev.planned:
             continue
-        days = sorted(d for d in (date.fromisoformat(x) for x in ev.days) if d in week)
-        if days:
-            by_day.setdefault(days[0], []).append(ev.title)
+        all_days = sorted(date.fromisoformat(x) for x in ev.days)
+        in_week = [d for d in all_days if d in week]
+        if ev.source == TRAIN_SOURCE:
+            if in_week:
+                until = f" (fino al {all_days[-1]:%d/%m})" if all_days[-1] > max(week) else ""
+                trains.append((in_week[0], f"{ev.title.removeprefix('Lavori — ')}{until}"))
+            continue
+        if ev.topic != "programmate":
+            continue
+        if in_week:
+            by_day.setdefault(in_week[0], []).append(ev.title)
         elif not ev.days and ev.published >= since:
             ongoing.append(ev.title)
-    if not by_day and not ongoing:
+    if not by_day and not ongoing and not trains:
         return None
 
-    parts = [f"📅 GTT — deviazioni programmate da {_day_label(today)} a {_day_label(today + timedelta(days=6))}"]
-    for day in sorted(by_day):
-        parts.append(f"▪️ {_day_label(day)}\n" + "\n".join(f"• {t}" for t in sorted(set(by_day[day]))))
-    if ongoing:
-        bullets = "\n".join(f"• {t}" for t in sorted(set(ongoing)))
-        parts.append("▪️ Da questa settimana, fino a nuova comunicazione\n" + bullets)
-    parts.append("Dettagli in privato: /linea <numero> oppure /segui programmate")
+    parts = [f"📌 LAVORI E DEVIAZIONI DELLA SETTIMANA\n{_day_label(today)} – {_day_label(today + timedelta(days=6))}"]
+    if by_day or ongoing:
+        gtt = ["🚌 GTT"]
+        for day in sorted(by_day):
+            gtt.append(f"▪️ {_day_label(day)}\n" + "\n".join(f"• {t}" for t in sorted(set(by_day[day]))))
+        if ongoing:
+            bullets = "\n".join(f"• {t}" for t in sorted(set(ongoing)))
+            gtt.append("▪️ Da questa settimana, fino a nuova comunicazione\n" + bullets)
+        parts.append("\n\n".join(gtt))
+    if trains:
+        rows = [f"• da {_day_label(d)}: {t}" if d > today else f"• {t}" for d, t in sorted(set(trains))]
+        parts.append("🚆 TRENI — lavori sulle linee di Torino\n" + "\n".join(rows))
+    parts.append("Dettagli in privato: /linea <numero>, /segui programmate, /segui treni")
 
     text = "\n\n".join(parts)
     if len(text) > max_len:
         text = text[:max_len].rsplit("\n", 1)[0] + "\n… elenco completo con /segui programmate"
     return text
+
+
+def _post_weekly(text: str, store, notifier) -> None:
+    """Pubblica il riepilogo del lunedì, lo fissa in alto e toglie il fissaggio al precedente."""
+    msg_id = notifier.send(text, silent=True)
+    previous = store.get_many([WEEKLY_PIN_KEY]).get(WEEKLY_PIN_KEY, {}).get("msg")
+    try:
+        if msg_id:
+            notifier.pin(msg_id)
+        if previous and previous != msg_id:
+            notifier.unpin(previous)
+    except Exception as e:  # es. il bot non ha il permesso di fissare messaggi nel canale
+        log("weekly_pin_failed", error=repr(e))
+    if msg_id:
+        store.put(WEEKLY_PIN_KEY, {"msg": int(msg_id)})
+    log("weekly_sent", chars=len(text), msg=msg_id)
 
 
 def _collect(sources, settings: Settings, weather_fn: Callable[[], str]):
@@ -115,7 +150,7 @@ def run_digest(sources, store, notifier, settings: Settings, weather_fn, now: da
                force: bool = False) -> dict:
     """
     Riepilogo sul canale una volta al giorno all'ora configurata (ora di Roma);
-    il lunedì anche il riepilogo settimanale delle deviazioni GTT programmate.
+    il lunedì anche il riepilogo settimanale di lavori e deviazioni, fissato in alto.
     """
     now = (now or datetime.now(ROME)).astimezone(ROME)
     if not force and now.hour != settings.digest_hour:
@@ -134,6 +169,5 @@ def run_digest(sources, store, notifier, settings: Settings, weather_fn, now: da
 
     weekly = build_weekly(events, now) if now.weekday() == 0 else None
     if weekly:
-        notifier.send(weekly, silent=True)
-        log("weekly_sent", chars=len(weekly))
+        _post_weekly(weekly, store, notifier)
     return {"status": "sent", "chars": len(text), "weekly": bool(weekly)}

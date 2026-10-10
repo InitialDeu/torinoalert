@@ -81,10 +81,10 @@ def test_gtt_alerts_severity_and_periods(fixture_bytes):
     assert events["Linea 17 deviata in entrambe le direzioni"].severity == "LOW"
     assert events["Linea 17 deviata in entrambe le direzioni"].topic == "programmate"  # Strarivoli, annunciata
     line17 = events["Linea 17 deviata in entrambe le direzioni"]
-    assert "Avviso valido dal mer 07/10 10:11 al dom 11/10 21:59" in line17.body
+    assert "Avviso valido" not in line17.body and "Strarivoli" not in line17.title  # niente periodo GTFS
     elevator = next(e for t, e in events.items() if "ascensori" in t)
     assert elevator.title.startswith("🛗") and elevator.severity == "LOW" and elevator.lines == ("METRO",)
-    assert "fino a nuova comunicazione" in elevator.body and not elevator.digest_line
+    assert "Avviso valido" not in elevator.body and not elevator.digest_line
 
 
 def test_gtt_alerts_skip_finished_and_ids_stable(fixture_bytes):
@@ -227,3 +227,11 @@ def test_gtt_planned_vs_unplanned_rules():
     assert not vague.planned
     metro_works = _one(_alert("Metro chiusa per lavori", "Domenica 11 ottobre 2026.", routes=("METROU",)))
     assert metro_works.planned and metro_works.topic == ""  # la metro resta sul canale
+
+
+def test_gtt_unplanned_promises_resolution_reply(fixture_bytes):
+    events = gtt.parse_alerts(fixture_bytes("gtt_alerts.pb"), now=GTT_NOW)
+    vanchiglia = next(e for e in events if e.title.startswith("linee 6,19"))
+    assert vanchiglia.close_notice and gtt.CLOSE_FOOTER in vanchiglia.body
+    planned_17 = next(e for e in events if e.title == "Linea 17 deviata in entrambe le direzioni")
+    assert gtt.CLOSE_FOOTER not in planned_17.body

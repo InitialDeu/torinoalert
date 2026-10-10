@@ -62,6 +62,7 @@ def parse_viabilita(html: str, today: date | None = None) -> list[Event]:
         event_id = item["data-index"]
         events.append(Event(
             id=f"mato:{event_id}",
+            close_notice=True,
             source=SOURCE_CITY,
             severity=_city_severity(title),
             title=title.capitalize(),

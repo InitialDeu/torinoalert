@@ -71,6 +71,15 @@ class Telegram:
         self.send(text, chat_id=self.admin_chat_id)
         return True
 
+    def pin(self, message_id: int, chat_id: str | None = None) -> None:
+        """Fissa un messaggio (nel canale serve il permesso di modificare i messaggi)."""
+        self.call("pinChatMessage", {
+            "chat_id": chat_id or self.chat_id, "message_id": int(message_id), "disable_notification": True,
+        })
+
+    def unpin(self, message_id: int, chat_id: str | None = None) -> None:
+        self.call("unpinChatMessage", {"chat_id": chat_id or self.chat_id, "message_id": int(message_id)})
+
     def set_webhook(self, url: str, secret: str) -> None:
         self.call("setWebhook", {
             "url": url,
@@ -97,3 +106,9 @@ class DryRunNotifier:
     def send_admin(self, text: str) -> bool:
         print(f"[ADMIN] {text}")
         return True
+
+    def pin(self, message_id: int, chat_id: str | None = None) -> None:
+        print(f"[fissato in alto il messaggio {message_id}]")
+
+    def unpin(self, message_id: int, chat_id: str | None = None) -> None:
+        print(f"[tolto dai fissati il messaggio {message_id}]")

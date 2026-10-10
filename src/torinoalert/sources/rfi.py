@@ -60,6 +60,7 @@ def parse(xml_bytes: bytes, now: float | None = None) -> list[Event]:
             source=SOURCE,
             severity=severity,
             topic="" if severity == "HIGH" else "treni",  # i rientri seguono il messaggio sul canale
+            close_notice=True,
             title=title,
             body=summary,
             link=link,

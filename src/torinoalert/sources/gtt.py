@@ -1,13 +1,13 @@
 """GTT: avvisi ufficiali in GTFS-realtime e news di servizio (RSS)."""
 import re
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import feedparser
 
 from .. import gtfsrt
 from ..events import Event
-from ..text import ROME, dates_in_text, lines_in_text, norm_key, normalize_line, sha, strip_html, title_with_line
+from ..text import ROME, day_span, lines_in_text, norm_key, normalize_line, sha, strip_html, title_with_line
 
 ALERTS_URL = "https://percorsieorari.gtt.to.it/das_gtfsrt/alerts.aspx"
 NEWS_URL = "https://www.gtt.to.it/cms/avvisi-e-informazioni-di-servizio?format=feed&type=rss"
@@ -29,7 +29,6 @@ OPERATIONAL = [
 
 
 RESTORED = ["ripristin", "riprend", "torna", "riapr", "regolare"]
-_DAYS = ["lun", "mar", "mer", "gio", "ven", "sab", "dom"]
 
 
 def _severity_of(text: str) -> str | None:
@@ -78,26 +77,7 @@ def route_to_line(route_id: str) -> str | None:
     return normalize_line(rid[:-1] if rid[-1:] in ("U", "E") else rid)
 
 
-def _fmt_time(ts: int, now: float) -> str:
-    dt = datetime.fromtimestamp(ts, ROME)
-    year = "" if dt.year == datetime.fromtimestamp(now, ROME).year else f"/{dt.year}"
-    return f"{_DAYS[dt.weekday()]} {dt:%d/%m}{year} {dt:%H:%M}"
-
-
-def _periods_text(periods: list[tuple[int, int]], now: float) -> str:
-    parts = []
-    for start, end in periods[:3]:
-        # GTT mette una fine fittizia (circa un anno) agli avvisi "sino a nuove comunicazioni".
-        open_ended = not end or end - now > 180 * 86400
-        if start and open_ended:
-            parts.append(f"dal {_fmt_time(start, now)} fino a nuova comunicazione")
-        elif start:
-            parts.append(f"dal {_fmt_time(start, now)} al {_fmt_time(end, now)}")
-        elif not open_ended:
-            parts.append(f"fino al {_fmt_time(end, now)}")
-    if len(periods) > 3:
-        parts.append(f"e altri {len(periods) - 3} periodi")
-    return ("Avviso valido " + "; ".join(parts)) if parts else ""
+CLOSE_FOOTER = "↩️ Quando il servizio torna regolare arriva una risposta a questo messaggio."
 
 
 # Imprevisti: vanno avvisati subito. Cause GTFS: problema tecnico, incidente, maltempo,
@@ -115,9 +95,6 @@ PLANNED_WORDS = (
     "denominata", "concerto", "partita", "mercato", "posa ", "luminarie", "allestimento", "festa",
     "maratona", "gara", "nuovo percorso", "sperimentale", "a partire da",
 )
-
-
-_RANGE_RE = re.compile(r"\b(?:dal|da|dalle ore \S+ di)\b.{0,80}?\b(?:al|a|fino|sino)\b", re.IGNORECASE)
 
 
 def is_unplanned(alert: gtfsrt.Alert, text: str, days: list) -> bool:
@@ -184,19 +161,17 @@ def parse_alerts(data: bytes, now: float | None = None) -> list[Event]:
             (not start or start <= now) and (not end or end >= now) for start, end in alert.periods
         )
         today = datetime.fromtimestamp(now, ROME).date()
-        mentioned = sorted(set(dates_in_text(f"{title} {description}", today)))
-        if len(mentioned) >= 2 and _RANGE_RE.search(text):
-            # "da martedì 13 a sabato 24 ottobre": valgono tutti i giorni in mezzo.
-            first, last = mentioned[0], min(mentioned[-1], mentioned[0] + timedelta(days=60))
-            mentioned = [first + timedelta(days=i) for i in range((last - first).days + 1)]
-        days = [d for d in mentioned if today <= d <= today + timedelta(days=60)]
+        days = day_span(f"{title} {description}", today)
         unplanned = is_unplanned(alert, text, days)
         planned = not unplanned and not elevator
         cause = gtfsrt.CAUSES.get(alert.cause, "")
+        topic = _topic(alert, title, lines, planned)
+        # Niente "valido fino a...": il periodo GTFS è quello dell'avviso, non dell'evento.
+        # La fine la comunica il bot rispondendo al messaggio quando l'avviso sparisce.
         body = "\n".join(x for x in (
-            _periods_text(alert.periods, now),
             description,
             f"Causa: {cause}" if cause and alert.cause not in (1, 2) and cause not in text else "",
+            CLOSE_FOOTER if not planned and not elevator and not topic else "",
         ) if x)
         if planned:
             digest = title if today in days else ""  # nel riepilogo del giorno in cui avviene
@@ -206,12 +181,14 @@ def parse_alerts(data: bytes, now: float | None = None) -> list[Event]:
             id=f"gtt-rt:{alert.id}",
             source=SOURCE,
             severity=_alert_severity(alert, title, lines, unplanned),
-            topic=_topic(alert, title, lines, planned),
+            topic=topic,
             title=("🛗 " + title) if elevator else title_with_line(title),
             body=body,
             link=alert.url or LINK,
-            # GTT aggiorna lo stesso avviso (nuovo orario, ascensore riparato): si risponde al messaggio.
-            fingerprint=sha(norm_key(title) + "|" + norm_key(description) + "|" + repr(alert.periods))[:16],
+            # GTT aggiorna lo stesso avviso (nuovo testo, ascensore riparato): si risponde al messaggio.
+            # Le sole proroghe del periodo non contano.
+            fingerprint=sha(norm_key(title) + "|" + norm_key(description))[:16],
+            close_notice=True,
             lines=tuple(sorted(lines)),
             max_len=1200,
             digest_line=digest,

@@ -33,6 +33,13 @@ SOURCE_STYLE = {
 TELEGRAM_MAX_LEN = 3800  # limite Telegram 4096, con margine
 
 
+def closing_text(source: str, title: str) -> str:
+    """Risposta al messaggio originale quando l'avviso non è più attivo."""
+    icon = SOURCE_STYLE.get(source, ("📢", ""))[0]
+    return (f"{icon} {source} · ✅ RISOLTO\n\n{title}\n\n"
+            "L'avviso non è più tra quelli attivi: la situazione è tornata regolare.")
+
+
 def _hashtag(text: str) -> str:
     return "#" + "".join(ch for ch in text if ch.isalnum() or ch == "_")
 
@@ -61,6 +68,8 @@ class Event:
     # Giorni (ISO) citati nel testo, per i riepiloghi; e quando la fonte l'ha pubblicato (epoch).
     days: tuple[str, ...] = ()
     published: int = 0
+    # Se è stato pubblicato sul canale e sparisce dalla fonte, si risponde al messaggio con "risolto".
+    close_notice: bool = False
     # Testo aggiuntivo scaricato solo al momento dell'invio (es. corpo di un articolo).
     enrich: Callable[[], str] | None = field(default=None, compare=False, repr=False)
 

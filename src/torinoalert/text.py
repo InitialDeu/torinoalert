@@ -118,9 +118,13 @@ def _closest_year(day: int, month: int, today: date) -> int:
     return min(candidates, key=lambda d: abs((d - today).days)).year
 
 
-# "13 a sabato 24 ottobre", "5 e martedì 6 ottobre": il primo giorno prende il mese del secondo.
+# Collegamento tra due giorni: "a", "e", "-", oppure lo stile GTT "sino alle ore 18.00 circa di".
+_JOIN = r"(?:a|al|e|ed|-|–|(?:sino|fino)\s+alle\s+ore\s+[\d.:]+(?:\s+circa)?\s+di)"
+_WEEKDAY = r"(?:[a-zà-ù'’]+\s+)?"  # "sabato ", "lunedi’ "
+# "13 a sabato 24 ottobre", "5 e martedì 6 ottobre", "12 sino alle ore 18.00 di venerdi’ 16 ottobre":
+# il primo giorno prende il mese del secondo.
 _SHARED_MONTH_RE = re.compile(
-    r"\b(\d{1,2})(?:°|º)?(\s+(?:a|al|e|ed|-|–)\s+(?:[a-zà-ù']+\s+)?\d{1,2}(?:°|º)?\s+(" + "|".join(MONTHS) + r"))",
+    r"\b(\d{1,2})(?:°|º)?(\s+" + _JOIN + r"\s+" + _WEEKDAY + r"\d{1,2}(?:°|º)?\s+(" + "|".join(MONTHS) + r"))",
     re.IGNORECASE,
 )
 
@@ -149,6 +153,29 @@ def dates_in_text(text: str, today: date) -> list[date]:
         found.append(d)
         prev = d
     return found
+
+
+# Periodo esplicito "da [giorno] N [mese] a/al [giorno] N": "sabato 10 e domenica 25" sono due giorni.
+_RANGE_RE = re.compile(
+    r"\b(?:dal?|dalle\s+ore\s+[\d.:]+\s+di)\s+" + _WEEKDAY + r"\d{1,2}(?:°|º)?"
+    r"(?:\s+(?:" + "|".join(MONTHS) + r"))?(?:\s*\d{4})?"
+    r"\s+(?:al?|fino\s+al?|sino\s+al?|(?:sino|fino)\s+alle\s+ore\s+[\d.:]+(?:\s+circa)?\s+di)\s+"
+    + _WEEKDAY + r"\d{1,2}\b",
+    re.IGNORECASE,
+)
+
+
+def day_span(text: str, today: date, horizon_days: int = 60) -> list[date]:
+    """
+    Giorni interessati da oggi in poi: le date citate e, per i periodi "da martedì 13 a
+    sabato 24 ottobre", tutti i giorni in mezzo (al massimo `horizon_days`).
+    """
+    mentioned = sorted(set(dates_in_text(text, today)))
+    if len(mentioned) >= 2 and _RANGE_RE.search(text or ""):
+        first = mentioned[0]
+        last = min(mentioned[-1], first + timedelta(days=horizon_days))
+        mentioned = [first + timedelta(days=i) for i in range((last - first).days + 1)]
+    return [d for d in mentioned if today <= d <= today + timedelta(days=horizon_days)]
 
 
 def title_has_past_date(title: str, today: date | None = None) -> bool:

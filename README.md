@@ -16,7 +16,7 @@ TorinoAlert polls 19 public sources **in parallel**. Fast-changing ones are chec
 | **GTT – GTFS-realtime** | Official service alerts (detours, suspensions, stops, metro lifts) with the affected lines and validity periods | 2 min |
 | **GTT – news** | Service notices RSS, promotional content filtered out | 10 min |
 | **RFI** | Regional rail disruptions; edits to the same item are sent as `🔄 AGGIORNAMENTO` | 2 min |
-| **Trenitalia** | Real-time notices touching Turin + "Infolavori Piemonte" (HTML) | 10 min |
+| **Trenitalia** | Notices on Turin-area lines; for national notices only the long-distance trains to/from Turin, without the distant line's name; "Infolavori Piemonte" (HTML) | 10 min |
 | **Scioperi (MIT)** | Strikes in public transport, rail, air, general — Piedmont or national; reminder the day before | 30 min |
 | **5T – Muoversi in Piemonte** | Motorways, ring road and state roads (motorways up to 80 km), regional public transport news | 10 min |
 | **5T – Muoversi a Torino** | Traffic changes on Turin streets (underpasses, demonstrations, roadworks) with full text | 10 min |
@@ -40,8 +40,8 @@ The channel only carries what matters to the whole city; detail is opt-in, so no
 |---|---|
 | Weather alerts, rivers, earthquakes, strikes | `extraurbane` — GTT extra-urban lines and regional public transport |
 | GTT **unexpected** disruptions (accidents, breakdowns, blocked trams, unannounced demonstrations), metro, lift status — these ring | `programmate` — GTT urban detours announced in advance, one by one |
-| **Weekly summary every Monday** of planned GTT detours, grouped by day (and in the 07:00 summary of the day itself) | `fermate` — single GTT stops suspended or moved |
-| Rail **suspensions/interruptions** | `treni` — rail works and minor disruptions |
+| **One pinned message every Monday**: planned GTT detours of the week grouped by day + works on Turin's railway lines (replaces last week's pin; planned items also appear in the 07:00 summary of their day) | `fermate` — single GTT stops suspended or moved |
+| Rail **suspensions/interruptions**; long-distance trains to/from Turin that are cancelled, skip stops or run 60+ minutes late | `treni` — rail works and minor disruptions |
 | Turin street closures, city news, anti-smog, water | `traffico` — motorways, ring road, state roads, A32/Fréjus closure programmes |
 | **Cancelled** flights | `provinciali` — provincial roads |
 | Morning summary | `aeroporto` — flight delays |
@@ -55,6 +55,7 @@ If an event was published on the channel, its updates stay on the channel as rep
 - **Recognisable messages**: every message starts with a category icon and the source (🚌 GTT, 🚆 trains, 🚗 traffic, 🚧 city roads, 🌊 rivers, ⛈️ weather, ✊ strikes, ✈️ airport, 💧 water, 🌫️ smog…), the urgency in words when it matters (`🔴 URGENTE`, `🟠 IMPORTANTE`), and ends with hashtags (`#GTT #linea17`) to search or filter in Telegram.
 - **Silent notifications**: `LOW` and `INFO` messages never ring; between 23:00 and 07:00 only `CRIT` does.
 - **Threaded, rate-limited updates**: when a notice changes, the update is a reply to the original message. Updates go out immediately if the severity changes, otherwise at most once per hour per notice (sources such as Trenitalia rewrite the same notice every few minutes).
+- **"Resolved" replies**: GTT disruptions, rail notices and Turin street closures published on the channel get a `✅ RISOLTO` reply to the original message when they disappear from their source for two consecutive checks (a source that fails or returns nothing never closes anything). The GTT validity period is not shown, because it is the notice's validity, not the end of the disruption.
 - **Morning summary** at 07:00 on the channel: weather, alerts, rivers, strikes, GTT, trains, city closures, road closures active today, anti-smog level.
 - **Private commands** (write to the bot):
   - `/linea 4`, `/linea metro`, `/linea SE2`, `/linea 1432` — GTT notices for your lines, including extra-urban ones (matched on the lines GTT declares in each alert)

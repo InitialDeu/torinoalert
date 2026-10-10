@@ -293,3 +293,19 @@ def test_aeroporto_topics():
       <tr><td>09:00</td><td>PARIS</td><td>AF2</td><td>partenza prevista alle ore 10:30</td></tr></table></div></div>"""
     by_flight = {e.id.split(":")[2]: e for e in mato.parse_aeroporto(html, now=datetime(2026, 10, 8, 7, tzinfo=ROME))}
     assert by_flight["AZ1"].topic == "" and by_flight["AF2"].topic == "aeroporto"
+
+
+# ---------- TRENITALIA: treni da/per Torino ----------
+
+def test_trenitalia_only_torino_trains_without_line_name(fixture_text):
+    events = trenitalia.parse(fixture_text("trenitalia_treni.html"), today=date(2026, 10, 10))
+    trains = [e for e in events if e.id.startswith("treno:")]
+    assert trains and all("Torino" in e.title for e in trains)
+    assert not any("Linea" in e.title or "Bari" in e.title for e in trains)  # nessuna linea lontana nel titolo
+    numbers = [e.id.split(":")[1] for e in trains]
+    assert len(numbers) == len(set(numbers))  # lo stesso treno in più avvisi: un solo messaggio
+    fr = next(e for e in trains if ":9584:" in e.id)
+    assert fr.title.startswith("🚄 Frecciarossa 9584") and "→ Torino Porta Nuova" in fr.title
+    assert "ritardo oltre 60 minuti" in fr.title and fr.severity == "LOW" and fr.topic == ""
+    icn = next(e for e in trains if ":795:" in e.id)
+    assert icn.severity == "MED" and "non ferma" in icn.body  # fermate saltate: variazione

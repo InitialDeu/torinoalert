@@ -9,6 +9,7 @@ silenzioso delle fonti nuove -> consegna ordinata per gravità:
     `update_min_interval_minutes`;
 -> salute delle fonti con avviso admin.
 """
+import json
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -17,7 +18,7 @@ from datetime import datetime
 
 from . import subscriptions
 from .config import Settings
-from .events import SEVERITY_RANK, Event
+from .events import SEVERITY_RANK, Event, closing_text
 from .log import log
 from .sources import gtt
 from .telegram import TelegramError
@@ -32,6 +33,16 @@ def bootstrap_key(source: str) -> str:
 
 def health_key(source: str) -> str:
     return f"__meta__:health:{source}"
+
+
+def open_key(source: str) -> str:
+    """Avvisi pubblicati sul canale e non ancora risolti, per fonte."""
+    return f"__meta__:open:{source}"
+
+
+# Giri consecutivi in cui un avviso deve mancare prima di dichiararlo risolto
+# (un feed che "perde" un avviso per un giro non deve generare falsi "risolto").
+RESOLVE_AFTER_MISSES = 2
 
 
 def collect_all(sources: Sources, timeout: float) -> dict[str, list[Event] | Exception]:
@@ -90,6 +101,7 @@ class _Outcome:
     failed: int = 0
     throttled: int = 0
     handled: set = field(default_factory=set)
+    opened: list = field(default_factory=list)  # (evento, message_id) da seguire fino alla risoluzione
 
 
 def run(
@@ -119,6 +131,7 @@ def run(
 
     records = store.get_many(
         list(ids) + [bootstrap_key(n) for n in sources] + [health_key(n) for n in sources]
+        + [open_key(n) for n in sources]
     )
 
     pending: list[tuple[Event, dict | None]] = []  # (evento, record esistente se è un aggiornamento)
@@ -147,11 +160,13 @@ def run(
 
     pending.sort(key=lambda p: SEVERITY_RANK.get(p[0].severity, len(SEVERITY_RANK)))
     out = _deliver_all(pending, store, notifier, settings, now, ttl, deadline, sleep, clock)
+    resolved = _close_resolved(events_by_source, records, out.opened, store, notifier, settings, sleep)
     store.flush()
 
     summary = {
         "status": "ok",
         "sent": out.channel,
+        "resolved": resolved,
         "dm": out.dm,
         "private_only": out.private_only,
         "throttled": out.throttled,
@@ -226,6 +241,8 @@ def _deliver_all(pending, store, notifier, settings, now, ttl, deadline, sleep, 
                 out.failed += 1  # non marcato: si riprova alla prossima esecuzione
                 continue
             out.channel += 1
+            if ev.close_notice and msg_id:
+                out.opened.append((ev, msg_id))
         else:
             out.private_only += 1
 
@@ -235,6 +252,48 @@ def _deliver_all(pending, store, notifier, settings, now, ttl, deadline, sleep, 
         log("sent", event_id=ev.id, severity=ev.severity, update=is_update, silent=silent,
             channel=in_channel, topic=ev.topic, private=len(private))
     return out
+
+
+def _close_resolved(events_by_source, records, opened, store, notifier, settings, sleep) -> int:
+    """
+    Per ogni fonte letta con successo: gli avvisi pubblicati sul canale che non compaiono
+    più per RESOLVE_AFTER_MISSES giri ricevono un "✅ RISOLTO" in risposta al messaggio.
+    """
+    just_opened = {ev.id: msg for ev, msg in opened}
+    resolved = 0
+    for name, events in events_by_source.items():
+        if not events:
+            continue  # fonte vuota: probabilmente un problema del feed, non "tutto risolto"
+        key = open_key(name)
+        tracked = json.loads(records.get(key, {}).get("items") or "{}")
+        changed = False
+        for ev in events:
+            if ev.id in just_opened:
+                tracked[ev.id] = {"m": int(just_opened[ev.id]), "t": ev.title, "s": ev.source, "x": 0}
+                changed = True
+        current = {ev.id for ev in events}
+        for event_id, item in list(tracked.items()):
+            if event_id in current:
+                if item.get("x"):
+                    item["x"], changed = 0, True
+                continue
+            item["x"] = int(item.get("x", 0)) + 1
+            changed = True
+            if item["x"] < RESOLVE_AFTER_MISSES:
+                continue
+            if resolved:
+                sleep(settings.send_interval)
+            try:
+                notifier.send(closing_text(item.get("s", ""), item["t"]), silent=True, reply_to=item["m"])
+            except Exception as e:
+                log("resolve_failed", event_id=event_id, error=repr(e))
+                continue  # si riprova al prossimo giro
+            del tracked[event_id]
+            resolved += 1
+            log("resolved", event_id=event_id)
+        if changed:
+            store.put(key, {"items": json.dumps(tracked, ensure_ascii=False)})
+    return resolved
 
 
 def _text(ev: Event, is_update: bool) -> str:

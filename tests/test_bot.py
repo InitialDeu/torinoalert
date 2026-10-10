@@ -78,12 +78,21 @@ def test_digest_says_when_all_clear():
 
 
 class Notifier:
-    def __init__(self):
+    def __init__(self, first_id=100):
         self.sent = []
+        self.pinned = []
+        self.unpinned = []
+        self.first_id = first_id
 
     def send(self, text, **kw):
         self.sent.append(text)
-        return 1
+        return self.first_id + len(self.sent)
+
+    def pin(self, message_id, chat_id=None):
+        self.pinned.append(message_id)
+
+    def unpin(self, message_id, chat_id=None):
+        self.unpinned.append(message_id)
 
 
 def test_digest_once_per_day_at_configured_hour():
@@ -155,20 +164,47 @@ def test_weekly_groups_by_day_and_skips_other_weeks():
         planned("Linea 38 deviata", (), published=int(MONDAY.timestamp()) - 86400),    # nuova, senza date
         planned("Linea 94 deviata", (), published=int(MONDAY.timestamp()) - 30 * 86400),  # vecchia
         Event(id="x", source="TRASPORTO PUBBLICO (GTT)", severity="MED", title="Linea 15 bloccata"),
+        Event(id="t1", source="TRENI (TRENITALIA)", severity="LOW", title="Lavori — Linea Torino - Modane",
+              topic="treni", planned=True, days=tuple(f"2026-10-{d}" for d in range(10, 27))),
+        Event(id="t2", source="TRENI (TRENITALIA)", severity="LOW", title="Lavori — Linea Torino - Genova",
+              topic="treni", planned=True, days=("2026-10-25",)),
     ]
     text = build_weekly(events, MONDAY)
-    assert text.startswith("📅 GTT — deviazioni programmate da lun 12/10 a dom 18/10")
+    assert text.startswith("📌 LAVORI E DEVIAZIONI DELLA SETTIMANA\nlun 12/10 – dom 18/10")
     assert text.index("▪️ mar 13/10") < text.index("Linea 17") < text.index("▪️ dom 18/10") < text.index("Linea 9")
     assert "Linea 38" in text and "fino a nuova comunicazione" in text
     assert "Linea 4 " not in text and "Linea 94" not in text and "Linea 15" not in text
+    assert text.index("🚌 GTT") < text.index("🚆 TRENI")
+    assert "• Linea Torino - Modane (fino al 26/10)" in text and "Torino - Genova" not in text
     assert build_weekly([], MONDAY) is None
 
 
-def test_weekly_sent_only_on_monday():
+def test_weekly_sent_and_pinned_only_on_monday():
     store, tg = MemoryStore(), Notifier()
     sources = {"GTT": lambda: [planned("Linea 9 deviata", ("2026-10-13",))]}
     assert run_digest(sources, store, tg, Settings(), lambda: "", now=MONDAY)["weekly"] is True
-    assert len(tg.sent) == 2 and tg.sent[1].startswith("📅 GTT")
+    assert len(tg.sent) == 2 and tg.sent[1].startswith("📌 LAVORI")
+    assert tg.pinned == [102] and tg.unpinned == []
+
+    # Il lunedì dopo: nuovo messaggio fissato, il precedente viene sganciato.
+    next_week = MONDAY.replace(day=19)
+    tg2 = Notifier(first_id=500)
+    sources = {"GTT": lambda: [planned("Linea 9 deviata", ("2026-10-20",))]}
+    run_digest(sources, store, tg2, Settings(), lambda: "", now=next_week)
+    assert tg2.pinned == [502] and tg2.unpinned == [102]
+
     tuesday_store, tuesday_tg = MemoryStore(), Notifier()
     assert run_digest(sources, tuesday_store, tuesday_tg, Settings(), lambda: "",
                       now=MONDAY.replace(day=13))["weekly"] is False
+    assert tuesday_tg.pinned == []
+
+
+def test_weekly_pin_failure_does_not_break_digest():
+    class NoPin(Notifier):
+        def pin(self, message_id, chat_id=None):
+            raise RuntimeError("not enough rights to pin a message")
+
+    store, tg = MemoryStore(), NoPin()
+    sources = {"GTT": lambda: [planned("Linea 9 deviata", ("2026-10-13",))]}
+    assert run_digest(sources, store, tg, Settings(), lambda: "", now=MONDAY)["weekly"] is True
+    assert len(tg.sent) == 2

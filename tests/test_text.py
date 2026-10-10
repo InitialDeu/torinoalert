@@ -95,3 +95,14 @@ def test_dates_share_month_in_ranges():
     assert dates_in_text("lunedì 5 e martedì 6 ottobre", today) == [date(2026, 10, 5), date(2026, 10, 6)]
     assert dates_in_text("giovedì 8 ottobre2026", today) == [date(2026, 10, 8)]
     assert dates_in_text("Linee 13 e 15 deviate", today) == []
+
+
+def test_day_span_ranges():
+    from torinoalert.text import day_span
+
+    today = date(2026, 10, 10)
+    gtt = day_span("Dalle ore 7.00 di lunedi’ 12 sino alle ore 18.00 circa di venerdi’ 16 ottobre", today)
+    assert (gtt[0], gtt[-1], len(gtt)) == (date(2026, 10, 12), date(2026, 10, 16), 5)
+    assert day_span("Sabato 10 e domenica 25 ottobre", today) == [date(2026, 10, 10), date(2026, 10, 25)]
+    assert len(day_span("Da sabato 10 a lunedì 26 ottobre", today)) == 17
+    assert day_span("dal 15 settembre al 15 aprile", today)[0] == today  # i giorni passati non contano

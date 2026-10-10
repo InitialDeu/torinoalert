@@ -313,3 +313,51 @@ def test_render_header_and_hashtags():
     assert first == "🚌 TRASPORTO PUBBLICO (GTT) · 🟠 IMPORTANTE"
     assert last == "#GTT #linea4 #metro"
     assert Event(id="x", source="FIUMI", severity="MED", title="t").render().startswith("🌊 FIUMI\n")
+
+
+# ---------- risposta "risolto" ----------
+
+def test_channel_alert_gets_resolved_reply_after_two_missing_runs():
+    store, tg = bootstrapped("S"), FakeNotifier()
+    other = ev("other")
+    do_run({"S": lambda: [ev("a", close_notice=True), other]}, store, tg)
+    assert len(tg.sent) == 2
+    do_run({"S": lambda: [other]}, store, tg, now=NOW + 120)   # primo giro senza: si aspetta
+    assert len(tg.sent) == 2
+    r = do_run({"S": lambda: [other]}, store, tg, now=NOW + 240)  # secondo giro senza: risolto
+    assert r["resolved"] == 1
+    last = tg.calls[-1]
+    assert last["reply_to"] == 1001 and last["silent"] and "✅ RISOLTO" in last["text"] and "titolo a" in last["text"]
+    do_run({"S": lambda: [other]}, store, tg, now=NOW + 360)
+    assert len(tg.sent) == 3  # una sola risposta
+
+
+def test_flapping_alert_is_not_resolved():
+    store, tg = bootstrapped("S"), FakeNotifier()
+    other = ev("other")
+    do_run({"S": lambda: [ev("a", close_notice=True), other]}, store, tg)
+    do_run({"S": lambda: [other]}, store, tg, now=NOW + 120)                               # sparisce
+    do_run({"S": lambda: [ev("a", close_notice=True), other]}, store, tg, now=NOW + 240)  # torna
+    do_run({"S": lambda: [other]}, store, tg, now=NOW + 360)                               # sparisce
+    assert not any("RISOLTO" in t for t in tg.sent)
+
+
+def test_empty_or_failed_source_does_not_resolve_everything():
+    store, tg = bootstrapped("S"), FakeNotifier()
+    do_run({"S": lambda: [ev("a", close_notice=True)]}, store, tg)
+
+    def boom():
+        raise OSError("down")
+
+    for minute in (2, 4, 6):
+        do_run({"S": lambda: []}, store, tg, now=NOW + minute * 60)
+        do_run({"S": boom}, store, tg, now=NOW + minute * 60 + 30)
+    assert not any("RISOLTO" in t for t in tg.sent)
+
+
+def test_private_and_non_closable_events_are_not_tracked():
+    store, tg = bootstrapped("S"), FakeNotifier()
+    do_run({"S": lambda: [ev("t", topic="treni", close_notice=True), ev("n"), ev("keep")]}, store, tg)
+    for minute in (2, 4):
+        do_run({"S": lambda: [ev("keep")]}, store, tg, now=NOW + minute * 60)
+    assert not any("RISOLTO" in t for t in tg.sent)
