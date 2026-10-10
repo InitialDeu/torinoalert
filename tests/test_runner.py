@@ -361,3 +361,35 @@ def test_private_and_non_closable_events_are_not_tracked():
     for minute in (2, 4):
         do_run({"S": lambda: [ev("keep")]}, store, tg, now=NOW + minute * 60)
     assert not any("RISOLTO" in t for t in tg.sent)
+
+
+# ---------- niente "AGGIORNAMENTO" per avvisi che nessuno ha visto ----------
+
+def test_changed_fingerprint_of_unseen_event_is_absorbed_silently():
+    """Il caso di produzione: cambia il modo di calcolare il fingerprint degli avvisi già registrati."""
+    store, tg = MemoryStore(), FakeNotifier()
+    do_run({"S": lambda: [ev("g", fingerprint="old")]}, store, tg)            # bootstrap silenzioso
+    r = do_run({"S": lambda: [ev("g", fingerprint="new")]}, store, tg, now=NOW + 7200)
+    assert tg.sent == [] and r["absorbed"] == 1 and store.data["g"]["fp"] == "new"
+
+
+def test_state_change_is_announced_even_if_never_published():
+    store, tg = MemoryStore(), FakeNotifier()
+    do_run({"S": lambda: [ev("fiume", "INFO", fingerprint="0", state=True)]}, store, tg)  # bootstrap
+    do_run({"S": lambda: [ev("fiume", "INFO", fingerprint="1", state=True)]}, store, tg)
+    assert len(tg.sent) == 1 and "AGGIORNAMENTO" not in tg.sent[0]
+
+
+def test_severity_change_of_unseen_event_is_a_new_message():
+    store, tg = MemoryStore(), FakeNotifier()
+    do_run({"S": lambda: [ev("g", "LOW", fingerprint="1")]}, store, tg)  # bootstrap
+    do_run({"S": lambda: [ev("g", "HIGH", fingerprint="2")]}, store, tg)
+    assert len(tg.sent) == 1 and "AGGIORNAMENTO" not in tg.sent[0]
+
+
+def test_topic_without_followers_does_not_count_as_seen():
+    store, tg = bootstrapped("S"), FakeNotifier()
+    do_run({"S": lambda: [ev("p", topic="programmate", fingerprint="1")]}, store, tg)
+    assert store.data["p"]["sent_at"] == 0
+    r = do_run({"S": lambda: [ev("p", topic="programmate", fingerprint="2")]}, store, tg, now=NOW + 7200)
+    assert r["absorbed"] == 1 and r["private_only"] == 0

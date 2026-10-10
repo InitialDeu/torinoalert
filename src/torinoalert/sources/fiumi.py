@@ -72,7 +72,7 @@ def parse_station(data: bytes, name: str | None = None) -> Event | None:
             id=f"fiume:{sensor}", source=SOURCE, severity="INFO",
             title=f"{name}: livello rientrato sotto la presoglia",
             body=body, link=LINK.format(sensor=sensor),
-            fingerprint="0", silent_if_new=True,
+            fingerprint="0", silent_if_new=True, state=True,
         )
     _, label, severity = BANDS[band - 1]
     return Event(
@@ -80,6 +80,7 @@ def parse_station(data: bytes, name: str | None = None) -> Event | None:
         title=f"🌊 {name}: superato il {label} ({_fmt(value)})",
         body=body, link=LINK.format(sensor=sensor),
         fingerprint=str(band),
+        state=True,
         digest_line=f"{name}: {label} superato, {_fmt(value)}",
     )
 

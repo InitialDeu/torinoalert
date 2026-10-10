@@ -91,6 +91,7 @@ def _zone_event(zone, alerts, effects, bulletin) -> Event:
             body=f"Bollettino n. {bulletin}" if bulletin else "",
             link=LINK,
             fingerprint=fingerprint,
+            state=True,
             silent_if_new=True,
             digest_line=f"Nessuna allerta meteo — {_zone_label(zone)}",
         )
@@ -113,4 +114,5 @@ def _zone_event(zone, alerts, effects, bulletin) -> Event:
         body="\n".join(lines),
         link=LINK,
         fingerprint=fingerprint,
+        state=True,
     )

@@ -56,6 +56,9 @@ class Event:
     fingerprint: str = ""
     # Se l'ID non è mai stato visto, registralo senza notificare (es. "allerta VERDE").
     silent_if_new: bool = False
+    # Il fingerprint è uno stato (livello di allerta, fascia del fiume): ogni cambio va comunicato,
+    # anche se lo stato precedente non era mai stato pubblicato.
+    state: bool = False
     max_len: int = 900
     # Riga per il riepilogo del mattino; vuota = l'evento non compare nel riepilogo.
     digest_line: str = ""

@@ -135,7 +135,7 @@ def run(
     )
 
     pending: list[tuple[Event, dict | None]] = []  # (evento, record esistente se è un aggiornamento)
-    silenced = refreshed = 0
+    silenced = refreshed = absorbed = 0
     for name, events in events_by_source.items():
         bootstrapping = settings.bootstrap_silent and bootstrap_key(name) not in records
         for ev in events:
@@ -147,7 +147,15 @@ def run(
                 else:
                     pending.append((ev, None))
             elif ev.fingerprint and rec.get("fp") != ev.fingerprint:
-                pending.append((ev, rec))
+                if _delivered(rec):
+                    pending.append((ev, rec))  # aggiornamento di qualcosa che qualcuno ha visto
+                elif ev.state or rec.get("sev") not in (None, ev.severity):
+                    pending.append((ev, None))  # cambio di stato o di gravità: nuovo messaggio
+                else:
+                    # Mai mostrato a nessuno (registrato al bootstrap, o in un argomento senza
+                    # iscritti): niente "AGGIORNAMENTO", si aggiorna lo stato in silenzio.
+                    store.put(ev.id, _record(ev, now, ttl, prev=rec))
+                    absorbed += 1
             elif int(rec.get("expires_at", 0)) - now < ttl // 2:
                 # Ancora pubblicato: rinnova il TTL, scadrà solo dopo che sparisce dalla fonte.
                 store.put(ev.id, _record(ev, now, ttl, prev=rec))
@@ -175,6 +183,7 @@ def run(
         "failed": out.failed,
         "silenced": silenced,
         "refreshed": refreshed,
+        "absorbed": absorbed,
         "events": len(ids),
         "per_source": {
             n: (len(r) if isinstance(r, list) else f"error: {r}") for n, r in results.items()
@@ -183,6 +192,11 @@ def run(
     }
     log("run_summary", **summary)
     return summary
+
+
+def _delivered(rec: dict) -> bool:
+    """L'evento è arrivato a qualcuno (canale o almeno un iscritto)?"""
+    return bool(rec.get("msg")) or int(rec.get("sent_at", 0)) > 0
 
 
 def _update_due(ev: Event, rec: dict, now: int, settings: Settings) -> bool:
@@ -246,8 +260,10 @@ def _deliver_all(pending, store, notifier, settings, now, ttl, deadline, sleep, 
         else:
             out.private_only += 1
 
-        out.dm += _send_private(notifier, private, text, silent, settings, out.dm)
-        store.put(ev.id, _record(ev, now, ttl, prev=rec, msg=msg_id, delivered=True))
+        reached = _send_private(notifier, private, text, silent, settings, out.dm)
+        out.dm += reached
+        # "Consegnato" solo se l'ha visto qualcuno: un argomento senza iscritti non genera aggiornamenti.
+        store.put(ev.id, _record(ev, now, ttl, prev=rec, msg=msg_id, delivered=in_channel or reached > 0))
         out.handled.add(ev.id)
         log("sent", event_id=ev.id, severity=ev.severity, update=is_update, silent=silent,
             channel=in_channel, topic=ev.topic, private=len(private))

@@ -53,6 +53,7 @@ def parse_semaforo(data: bytes) -> list[Event]:
         body=body,
         link=torino.get("U") or LINK_SEMAFORO,
         fingerprint=f"{today_lvl}/{tomorrow_lvl}",
+        state=True,
         silent_if_new=worst <= 0,
         digest_line=_level_text(today_lvl, "Semaforo antismog oggi"),
     )]
@@ -88,6 +89,7 @@ def parse_caldo(data: bytes, today: date | None = None) -> list[Event]:
         ),
         link=LINK_CALDO,
         fingerprint=str(worst),
+        state=True,
         silent_if_new=worst == 0,
         digest_line=f"Calore: {label}" if worst > 0 else "",
     )]
