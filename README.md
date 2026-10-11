@@ -54,7 +54,7 @@ If an event was published on the channel, its updates stay on the channel as rep
 
 - **Recognisable messages**: every message starts with a category icon and the source (🚌 GTT, 🚆 trains, 🚗 traffic, 🚧 city roads, 🌊 rivers, ⛈️ weather, ✊ strikes, ✈️ airport, 💧 water, 🌫️ smog…), the urgency in words when it matters (`🔴 URGENTE`, `🟠 IMPORTANTE`), and ends with hashtags (`#GTT #linea17`) to search or filter in Telegram.
 - **Silent notifications**: `LOW` and `INFO` messages never ring; between 23:00 and 07:00 only `CRIT` does.
-- **Threaded, rate-limited updates**: when a notice changes, the update is a reply to the original message. Updates go out immediately if the severity changes, otherwise at most once per hour per notice (sources such as Trenitalia rewrite the same notice every few minutes).
+- **Threaded, rate-limited updates**: when a notice changes, the update is a reply to the original message. Updates go out immediately if the severity changes, otherwise at most once per hour per notice (sources such as Trenitalia rewrite the same notice every few minutes). A notice nobody has received (recorded silently at bootstrap, or in a topic without followers) never produces an `🔄 AGGIORNAMENTO`: a text change just updates the stored state, a severity change becomes a new message. State-type sources (weather alert, rivers, anti-smog, heat) always announce a level change.
 - **"Resolved" replies**: GTT disruptions, rail notices and Turin street closures published on the channel get a `✅ RISOLTO` reply to the original message when they disappear from their source for two consecutive checks (a source that fails or returns nothing never closes anything). The GTT validity period is not shown, because it is the notice's validity, not the end of the disruption.
 - **Morning summary** at 07:00 on the channel: weather, alerts, rivers, strikes, GTT, trains, city closures, road closures active today, anti-smog level.
 - **Private commands** (write to the bot):
@@ -99,6 +99,8 @@ Prerequisites: Terraform >= 1.10, Python 3.13, AWS CLI, an AWS account, a Telegr
      --name /torino-alert/telegram/chat_id --value "<chat-id>"
    ```
    Use `--overwrite` to rotate them.
+
+   In the channel, the bot must be an administrator with **Post messages** and **Edit messages of others** (Telegram uses the latter right to let a bot pin messages in a channel). Without the edit right everything works, but the Monday summary is not pinned (the log shows `weekly_pin_failed`).
 2. **Optional settings**: copy `iac/variables/variables.tfvars.example` to `iac/variables/variables.tfvars` (gitignored) and set `admin_chat_id` / `alert_email`. If you set `alert_email`, confirm the subscription from the email AWS sends you.
 3. **Build and deploy**:
    ```bash
@@ -122,6 +124,8 @@ Every push to `main` runs lint and tests, then deploys with Terraform. GitHub au
 2. In the GitHub repository settings, add the variable `AWS_DEPLOY_ROLE_ARN` with the `deploy_role_arn` output. If you use them, also add the secrets `ADMIN_CHAT_ID` / `ALERT_EMAIL`; CI does not read your local tfvars.
 
 Until `AWS_DEPLOY_ROLE_ARN` is set, the deploy job is skipped and only the checks run.
+
+Recommended protection for `main` (Settings → Rules → Rulesets → New branch ruleset, target the default branch): **Restrict deletions** and **Block force pushes**. Requiring status checks or pull requests would block direct pushes to `main`; the deploy workflow already runs lint and tests before applying.
 
 ### Upgrading from the previous version
 
